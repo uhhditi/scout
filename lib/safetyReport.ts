@@ -32,14 +32,12 @@ export async function getSafetyReport(
   const airQualityScore = boundedScore(hash + 29);
   const waterAccessScore = boundedScore(hash + 43);
   const weatherAlertnessScore = boundedScore(hash + 59);
-  const trailCrowdingScore = boundedScore(hash + 71);
   const overallScore = Math.round(
     (fireRiskScore +
       airQualityScore +
       waterAccessScore +
-      weatherAlertnessScore +
-      trailCrowdingScore) /
-      5,
+      weatherAlertnessScore) /
+      4,
   );
 
   const status =
@@ -88,15 +86,6 @@ export async function getSafetyReport(
             ? "Forecast appears stable."
             : "Monitor local weather updates before departure.",
         icon: "⛅",
-      },
-      {
-        label: "Trail Crowding",
-        value: trailCrowdingScore,
-        note:
-          trailCrowdingScore >= 75
-            ? "Trails should feel manageable."
-            : "Expect busier trailheads and reduced campsite options.",
-        icon: "🥾",
       },
     ],
   };

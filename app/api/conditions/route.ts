@@ -51,10 +51,53 @@ if (!airRes.ok) {
 }
 const airData = await airRes.json()
 
+// Fetch fire data from NASA FIRMS (MODIS/VIIRS)
+// Using public JSON endpoint with distance filter
+const distanceNum = parseInt(distance) || 10
+const fireRes = await fetch(
+    `https://firms.modaps.eosdis.nasa.gov/api/area/json/MODIS_SP/MCD14DL/1/${lon},${lat},${distanceNum}/1`,
+    {headers: {'User-Agent': 'scout-app'}}
+)
+let fireData = null
+if (fireRes.ok) {
+    fireData = await fireRes.json()
+} else {
+    // Fallback to empty array if NASA FIRMS fails
+    fireData = []
+}
+
+// Fetch water access using Overpass API (OpenStreetMap)
+const overpassQuery = `
+[bbox=${lat - 0.05},${lon - 0.05},${lat + 0.05},${lon + 0.05}];
+(
+  way["natural"="water"];
+  way["water"];
+  node["natural"="spring"];
+  node["amenity"="drinking_water"];
+);
+out geom;
+`
+const waterRes = await fetch(
+    `https://overpass-api.de/api/interpreter`,
+    {
+        method: 'POST',
+        body: overpassQuery,
+        headers: {'User-Agent': 'scout-app'}
+    }
+)
+let waterData = null
+if (waterRes.ok) {
+    waterData = await waterRes.text()
+    // Parse OSM XML response - for now just return raw
+} else {
+    waterData = null
+}
 
 return NextResponse.json({
     location: {lat, lon},
-    weather:weatherData,
-    airQuality: airData
+    weather: weatherData,
+    airQuality: airData,
+    fire: fireData,
+    water: waterData
 })
 }

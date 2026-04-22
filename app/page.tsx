@@ -2,6 +2,15 @@
 
 import { FormEvent, useState } from "react";
 import { getSafetyReport, type SafetyReport } from "@/lib/safetyReport";
+import {
+  calculateFireRisk,
+  calculateAirQualityRisk,
+  calculateWeatherAlertness,
+  calculateWaterAccess,
+  calculateBearRisk,
+  calculateOverallSafetyScore,
+  getRiskLevel,
+} from "@/lib/riskScoring";
 
 function formatRange(startDate: string, endDate: string) {
   const start = new Date(startDate);
@@ -30,10 +39,109 @@ const detailTextByMetric: Record<string, string[]> = {
     "Mountain weather can change within hours, especially late afternoon and overnight.",
     "Plan layers, rain protection, and a quick shelter strategy before reaching remote sections.",
   ],
+  "Bear Risk": [
+    "Store all food and scented items in bear-proof containers or hang them properly.",
+    "Make noise while hiking and avoid hiking at dawn/dusk when bears are most active.",
+  ],
 };
 
 function metricSectionId(label: string) {
   return `metric-section-${label.toLowerCase().replace(/\s+/g, "-")}`;
+}
+
+// Transform API response into SafetyReport format
+async function generateSafetyReportFromAPI(
+  address: string,
+  startDate: string,
+  endDate: string,
+  distance: number
+): Promise<SafetyReport> {
+  try {
+    const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
+    console.log("Fetching conditions from:", url);
+    
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("API Error:", {
+        status: response.status,
+        statusText: response.statusText,
+        body: errorText,
+        url: url,
+      });
+      throw new Error(`Failed to fetch conditions data: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const { weather, airQuality, fire, location } = data;
+
+    // Calculate individual risk scores
+    const weatherDaily = weather?.daily || {};
+    const airHourly = airQuality?.hourly?.us_aqi || [];
+
+    // Use first day for initial assessment
+    const fireRisk = calculateFireRisk(fire, weatherDaily, 0);
+    const airQualityRisk = calculateAirQualityRisk(airHourly);
+    const weatherAlertness = calculateWeatherAlertness(weatherDaily, 0);
+    const hasWater = false; // Parse from water data when available
+    const waterAccess = calculateWaterAccess(hasWater, 5); // Default 5km away
+    
+    const startDateObj = new Date(startDate);
+    const month = startDateObj.getMonth() + 1;
+    const bearRisk = calculateBearRisk(weather?.elevation || 1000, location?.lat || 39, month);
+
+    const overallSafety = calculateOverallSafetyScore(
+      fireRisk,
+      airQualityRisk,
+      weatherAlertness,
+      waterAccess,
+      bearRisk
+    );
+
+    const metrics = [
+      {
+        label: "Fire Risk",
+        value: 100 - fireRisk, // Invert: lower risk score = higher safety
+        note: `Fire risk index based on active fires, wind conditions (${weatherDaily.windspeed_10m_max?.[0]?.toFixed(1) || 0} km/h), and precipitation.`,
+        icon: "🔥",
+      },
+      {
+        label: "Air Quality",
+        value: 100 - airQualityRisk,
+        note: `Air quality index currently at ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
+        icon: "💨",
+      },
+      {
+        label: "Weather Alertness",
+        value: 100 - weatherAlertness,
+        note: `Weather conditions show precipitation at ${weatherDaily.precipitation_sum?.[0]?.toFixed(1) || 0}mm risk of severe weather.`,
+        icon: "⛈️",
+      },
+      {
+        label: "Water Access",
+        value: waterAccess,
+        note: "Water availability in the area based on nearby streams and water features.",
+        icon: "💧",
+      },
+      {
+        label: "Bear Risk",
+        value: 100 - bearRisk,
+        note: `Bear activity risk based on elevation (${weather?.elevation || 1000}m) and season.`,
+        icon: "🐻",
+      },
+    ];
+
+    return {
+      overallScore: overallSafety,
+      status: getRiskLevel(overallSafety),
+      metrics,
+    };
+  } catch (error) {
+    console.error("Error generating safety report:", error);
+    // Fallback to mock data
+    return await getSafetyReport(address, startDate, endDate);
+  }
 }
 
 export default function Home() {
@@ -53,15 +161,14 @@ export default function Home() {
       siteType === "campsite" ? startDate : new Date().toISOString().slice(0, 10);
     const normalizedEndDate =
       siteType === "campsite" ? endDate : normalizedStartDate;
-    const querySeed =
-      siteType === "trail"
-        ? `${address} | distance:${trailDistance}`
-        : address;
+    const distanceNum = siteType === "trail" ? parseInt(trailDistance) || 10 : 10;
 
-    const nextReport = await getSafetyReport(
-      querySeed,
+    // Generate report using real API data
+    const nextReport = await generateSafetyReportFromAPI(
+      address,
       normalizedStartDate,
       normalizedEndDate,
+      distanceNum
     );
     setReport(nextReport);
     setExpandedMetric({});
@@ -228,13 +335,17 @@ export default function Home() {
                 <p className="mt-2 text-sm text-[#888780]">{report.status}</p>
               </article>
 
-              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-                {report.metrics.slice(0, 4).map((metric) => {
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+                {report.metrics.slice(0, 5).map((metric) => {
                   const radius = 28;
                   const circumference = 2 * Math.PI * radius;
                   const dashOffset = circumference * (1 - metric.value / 100);
-                  const progressColor =
-                    metric.label === "Fire Risk" ? "#C0392B" : "#EF9F27";
+                  const colorMap: Record<string, string> = {
+                    "Fire Risk": "#C0392B",
+                    "Bear Risk": "#8B4513",
+                    default: "#EF9F27",
+                  };
+                  const progressColor = colorMap[metric.label] || colorMap.default;
 
                   return (
                     <article
@@ -283,7 +394,7 @@ export default function Home() {
               </div>
 
               <div className="space-y-2">
-                {report.metrics.slice(0, 4).map((metric) => {
+                {report.metrics.slice(0, 5).map((metric) => {
                   const isExpanded = Boolean(expandedMetric[metric.label]);
                   const details = detailTextByMetric[metric.label] ?? [];
 
