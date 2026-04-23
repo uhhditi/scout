@@ -2,40 +2,54 @@
 
 type DashboardChartsProps = {
   chartSeed: number;
+  temps?: number[];
+  fireRisk?: number;
+  airRisk?: number;
+  bearRisk?: number;
 };
 
-export function DashboardCharts({ chartSeed }: DashboardChartsProps) {
-  const tempA = 56 + (chartSeed % 10);
-  const tempB = 60 + ((chartSeed * 3) % 11);
-  const tempC = 64 + ((chartSeed * 5) % 9);
-  const tempD = 61 + ((chartSeed * 7) % 10);
-  const tempE = 58 + ((chartSeed * 11) % 8);
-  const tempF = 54 + ((chartSeed * 13) % 8);
-  const temps = [tempA, tempB, tempC, tempD, tempE, tempF];
+export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk }: DashboardChartsProps) {
+  const hasRealTemps = temps && temps.length > 0;
+  const displayTemps = hasRealTemps
+    ? temps.slice(0, 7)
+    : [
+        56 + (chartSeed % 10),
+        60 + ((chartSeed * 3) % 11),
+        64 + ((chartSeed * 5) % 9),
+        61 + ((chartSeed * 7) % 10),
+        58 + ((chartSeed * 11) % 8),
+        54 + ((chartSeed * 13) % 8),
+      ];
 
-  const linePoints = temps
-    .map((temp, idx) => {
-      const x = idx * 64;
-      const y = 120 - (temp - 45) * 2.2;
-      return `${x},${Math.max(8, Math.min(112, y))}`;
-    })
+  const n = displayTemps.length;
+  // Inset x so edge labels don't get clipped
+  const xPad = 16;
+  const xStep = n > 1 ? (320 - xPad * 2) / (n - 1) : 0;
+  const xFor = (idx: number) => (n === 1 ? 160 : xPad + idx * xStep);
+
+  // Dynamic y scaling based on actual temp range
+  const minTemp = Math.min(...displayTemps);
+  const maxTemp = Math.max(...displayTemps);
+  const tempRange = Math.max(maxTemp - minTemp, 10);
+  const yFor = (temp: number) => {
+    const normalized = (temp - minTemp) / tempRange;
+    return Math.max(8, Math.min(112, 104 - normalized * 96 + 8));
+  };
+
+  const linePoints = displayTemps
+    .map((temp, idx) => `${xFor(idx)},${yFor(temp)}`)
     .join(" ");
 
-  const fireRisk = Math.min(1, 0.48 + (chartSeed % 45) / 100);
-  const airRisk = Math.min(1, 0.44 + ((chartSeed * 3) % 40) / 100);
-  const wildlifeRisk = Math.min(1, 0.42 + ((chartSeed * 5) % 45) / 100);
+  const hasRealRisk = fireRisk !== undefined && airRisk !== undefined && bearRisk !== undefined;
+  const fr = hasRealRisk ? fireRisk! / 100 : Math.min(1, 0.48 + (chartSeed % 45) / 100);
+  const ar = hasRealRisk ? airRisk! / 100 : Math.min(1, 0.44 + ((chartSeed * 3) % 40) / 100);
+  const br = hasRealRisk ? bearRisk! / 100 : Math.min(1, 0.42 + ((chartSeed * 5) % 45) / 100);
 
   const R = 58;
   const deg = (d: number) => (d * Math.PI) / 180;
-  const v1 = { x: 100, y: 100 - R * fireRisk };
-  const v2 = {
-    x: 100 + R * airRisk * Math.cos(deg(30)),
-    y: 100 + R * airRisk * Math.sin(deg(30)),
-  };
-  const v3 = {
-    x: 100 + R * wildlifeRisk * Math.cos(deg(150)),
-    y: 100 + R * wildlifeRisk * Math.sin(deg(150)),
-  };
+  const v1 = { x: 100, y: 100 - R * fr };
+  const v2 = { x: 100 + R * ar * Math.cos(deg(30)), y: 100 + R * ar * Math.sin(deg(30)) };
+  const v3 = { x: 100 + R * br * Math.cos(deg(150)), y: 100 + R * br * Math.sin(deg(150)) };
   const poly = `${v1.x},${v1.y} ${v2.x},${v2.y} ${v3.x},${v3.y}`;
 
   return (
@@ -54,15 +68,7 @@ export function DashboardCharts({ chartSeed }: DashboardChartsProps) {
               </linearGradient>
             </defs>
             {[0, 1, 2, 3, 4].map((i) => (
-              <line
-                key={i}
-                x1="0"
-                y1={20 + i * 24}
-                x2="320"
-                y2={20 + i * 24}
-                stroke="#d1d5db"
-                strokeWidth="1"
-              />
+              <line key={i} x1="0" y1={20 + i * 24} x2="320" y2={20 + i * 24} stroke="#d1d5db" strokeWidth="1" />
             ))}
             <polyline
               points={linePoints}
@@ -73,30 +79,20 @@ export function DashboardCharts({ chartSeed }: DashboardChartsProps) {
               strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
             />
-            {temps.map((temp, idx) => {
-              const x = idx * 64;
-              const y = 120 - (temp - 45) * 2.2;
-              return (
-                <circle
-                  key={`${temp}-${idx}`}
-                  cx={x}
-                  cy={Math.max(8, Math.min(112, y))}
-                  r="3.5"
-                  fill="#ea8a12"
-                />
-              );
-            })}
-            {["Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6"].map((label, idx) => (
+            {displayTemps.map((temp, idx) => (
+              <circle key={idx} cx={xFor(idx)} cy={yFor(temp)} r="3.5" fill="#ea8a12" />
+            ))}
+            {displayTemps.map((temp, idx) => (
               <text
-                key={label}
-                x={idx * 64}
+                key={idx}
+                x={xFor(idx)}
                 y="136"
-                textAnchor="middle"
+                textAnchor={idx === 0 ? "start" : idx === n - 1 ? "end" : "middle"}
                 fill="#6b7078"
                 fontSize="11"
                 style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
               >
-                {label}
+                {hasRealTemps ? `${Math.round(temp)}°` : `Day ${idx + 1}`}
               </text>
             ))}
           </svg>
@@ -129,34 +125,13 @@ export function DashboardCharts({ chartSeed }: DashboardChartsProps) {
               strokeWidth="2"
               strokeLinejoin="round"
             />
-            <text
-              x="100"
-              y="22"
-              textAnchor="middle"
-              fill="#6b7078"
-              fontSize="11"
-              style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
-            >
+            <text x="100" y="22" textAnchor="middle" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
               Fire
             </text>
-            <text
-              x="168"
-              y="152"
-              textAnchor="start"
-              fill="#6b7078"
-              fontSize="11"
-              style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
-            >
+            <text x="168" y="152" textAnchor="start" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
               Air
             </text>
-            <text
-              x="32"
-              y="152"
-              textAnchor="end"
-              fill="#6b7078"
-              fontSize="11"
-              style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
-            >
+            <text x="32" y="152" textAnchor="end" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
               Wildlife
             </text>
           </svg>

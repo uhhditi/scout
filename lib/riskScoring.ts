@@ -4,6 +4,7 @@
 /**
  * Fire Risk Score (1-100)
  * Based on: Active fire proximity, weather conditions (wind, precipitation), season
+ * Now considers the entire trip window by taking the maximum risk across all days
  */
 export function calculateFireRisk(
   fireData: any[],
@@ -12,43 +13,55 @@ export function calculateFireRisk(
     precipitation_sum: number[];
     windspeed_10m_max: number[];
   },
-  dayIndex: number = 0
+  startDate: string,
+  endDate: string
 ): number {
-  let score = 20; // baseline - most days are low risk
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
-  // Factor 1: Active fires nearby (NASA FIRMS data)
-  if (fireData && fireData.length > 0) {
-    score += 40; // significant risk if fires detected nearby
+  let maxRisk = 0;
+
+  for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
+    let score = 20; // baseline - most days are low risk
+
+    // Factor 1: Active fires nearby (NASA FIRMS data)
+    if (fireData && fireData.length > 0) {
+      score += 40; // significant risk if fires detected nearby
+    }
+
+    // Factor 2: Low precipitation = higher fire risk
+    const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
+    if (precipitation < 1) {
+      score += 20;
+    } else if (precipitation < 5) {
+      score += 10;
+    } else if (precipitation > 10) {
+      score -= 10; // Wet = lower risk
+    }
+
+    // Factor 3: High winds = higher fire risk
+    const windSpeed = weatherDaily.windspeed_10m_max[dayIndex] || 0;
+    if (windSpeed > 40) {
+      score += 25;
+    } else if (windSpeed > 30) {
+      score += 15;
+    } else if (windSpeed > 20) {
+      score += 8;
+    }
+
+    // Factor 4: Weather conditions
+    const weatherCode = weatherDaily.weathercode[dayIndex] || 0;
+    // Codes 80-82 (showers), 95-99 (thunderstorms) = lower fire risk
+    if ([80, 81, 82, 95, 96, 99].includes(weatherCode)) {
+      score -= 15;
+    }
+
+    const dayRisk = Math.max(1, Math.min(100, score));
+    maxRisk = Math.max(maxRisk, dayRisk);
   }
 
-  // Factor 2: Low precipitation = higher fire risk
-  const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
-  if (precipitation < 1) {
-    score += 20;
-  } else if (precipitation < 5) {
-    score += 10;
-  } else if (precipitation > 10) {
-    score -= 10; // Wet = lower risk
-  }
-
-  // Factor 3: High winds = higher fire risk
-  const windSpeed = weatherDaily.windspeed_10m_max[dayIndex] || 0;
-  if (windSpeed > 40) {
-    score += 25;
-  } else if (windSpeed > 30) {
-    score += 15;
-  } else if (windSpeed > 20) {
-    score += 8;
-  }
-
-  // Factor 4: Weather conditions
-  const weatherCode = weatherDaily.weathercode[dayIndex] || 0;
-  // Codes 80-82 (showers), 95-99 (thunderstorms) = lower fire risk
-  if ([80, 81, 82, 95, 96, 99].includes(weatherCode)) {
-    score -= 15;
-  }
-
-  return Math.max(1, Math.min(100, score));
+  return maxRisk;
 }
 
 /**
@@ -73,6 +86,7 @@ export function calculateAirQualityRisk(usAqiValues: number[]): number {
 /**
  * Weather Alertness Score (1-100)
  * Based on: Storm risk, precipitation, extreme wind, severe weather codes
+ * Now considers the entire trip window by taking the maximum alertness across all days
  */
 export function calculateWeatherAlertness(
   weatherDaily: {
@@ -80,50 +94,62 @@ export function calculateWeatherAlertness(
     precipitation_sum: number[];
     windspeed_10m_max: number[];
   },
-  dayIndex: number = 0
+  startDate: string,
+  endDate: string
 ): number {
-  let score = 20; // baseline
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
-  const weatherCode = weatherDaily.weathercode[dayIndex] || 0;
-  const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
-  const windSpeed = weatherDaily.windspeed_10m_max[dayIndex] || 0;
+  let maxAlertness = 0;
 
-  // Severe thunderstorms (95-99)
-  if ([95, 96, 99].includes(weatherCode)) {
-    score += 50;
-  }
-  // Regular thunderstorms/showers (80-82)
-  else if ([80, 81, 82].includes(weatherCode)) {
-    score += 30;
-  }
-  // Rain (51-67)
-  else if ([51, 53, 55, 61, 63, 65, 66, 67].includes(weatherCode)) {
-    score += 15;
-  }
-  // Sleet/snow (71-77, 85-86)
-  else if ([71, 73, 75, 77, 85, 86].includes(weatherCode)) {
-    score += 35;
+  for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
+    let score = 20; // baseline
+
+    const weatherCode = weatherDaily.weathercode[dayIndex] || 0;
+    const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
+    const windSpeed = weatherDaily.windspeed_10m_max[dayIndex] || 0;
+
+    // Severe thunderstorms (95-99)
+    if ([95, 96, 99].includes(weatherCode)) {
+      score += 50;
+    }
+    // Regular thunderstorms/showers (80-82)
+    else if ([80, 81, 82].includes(weatherCode)) {
+      score += 30;
+    }
+    // Rain (51-67)
+    else if ([51, 53, 55, 61, 63, 65, 66, 67].includes(weatherCode)) {
+      score += 15;
+    }
+    // Sleet/snow (71-77, 85-86)
+    else if ([71, 73, 75, 77, 85, 86].includes(weatherCode)) {
+      score += 35;
+    }
+
+    // Heavy precipitation
+    if (precipitation > 20) {
+      score += 20;
+    } else if (precipitation > 10) {
+      score += 10;
+    } else if (precipitation > 5) {
+      score += 5;
+    }
+
+    // Extreme wind
+    if (windSpeed > 50) {
+      score += 30;
+    } else if (windSpeed > 40) {
+      score += 20;
+    } else if (windSpeed > 30) {
+      score += 10;
+    }
+
+    const dayAlertness = Math.max(1, Math.min(100, score));
+    maxAlertness = Math.max(maxAlertness, dayAlertness);
   }
 
-  // Heavy precipitation
-  if (precipitation > 20) {
-    score += 20;
-  } else if (precipitation > 10) {
-    score += 10;
-  } else if (precipitation > 5) {
-    score += 5;
-  }
-
-  // Extreme wind
-  if (windSpeed > 50) {
-    score += 30;
-  } else if (windSpeed > 40) {
-    score += 20;
-  } else if (windSpeed > 30) {
-    score += 10;
-  }
-
-  return Math.max(1, Math.min(100, score));
+  return maxAlertness;
 }
 
 /**
