@@ -161,7 +161,7 @@ export default function Home() {
       siteType === "campsite" ? startDate : new Date().toISOString().slice(0, 10);
     const normalizedEndDate =
       siteType === "campsite" ? endDate : normalizedStartDate;
-    const distanceNum = siteType === "trail" ? parseInt(trailDistance) || 10 : 10;
+    const distanceNum = siteType === "trail" ? (parseFloat(trailDistance) || 10) * 1.60934 : 10;
 
     // Generate report using real API data
     const nextReport = await generateSafetyReportFromAPI(

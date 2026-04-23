@@ -52,10 +52,18 @@ if (!airRes.ok) {
 const airData = await airRes.json()
 
 // Fetch fire data from NASA FIRMS (MODIS/VIIRS)
-// Using public JSON endpoint with distance filter
+// Using public JSON endpoint with bbox
 const distanceNum = parseInt(distance) || 10
+// Calculate bbox: approximate square around lat,lon with side 2*distanceNum km
+const latOffset = distanceNum / 111.32; // 1 degree lat ~ 111.32 km
+const lonOffset = distanceNum / (111.32 * Math.cos(lat * Math.PI / 180)); // adjust for longitude
+const minLat = lat - latOffset;
+const maxLat = lat + latOffset;
+const minLon = lon - lonOffset;
+const maxLon = lon + lonOffset;
+const bbox = `${minLon},${minLat},${maxLon},${maxLat}`;
 const fireRes = await fetch(
-    `https://firms.modaps.eosdis.nasa.gov/api/area/json/MODIS_SP/MCD14DL/1/${lon},${lat},${distanceNum}/1`,
+    `https://firms.modaps.eosdis.nasa.gov/api/area/json/MODIS_SP/MCD14DL/1/${bbox}`,
     {headers: {'User-Agent': 'scout-app'}}
 )
 let fireData = null
