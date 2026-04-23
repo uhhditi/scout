@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #1a1c1e;
-  --foreground: #f5ecd7;
+  --background: #fffaf4;
+  --foreground: #1a1c1e;
   --surface: #22252a;
   --muted: #888780;
   --accent: #ef9f27;
@@ -24,4 +24,25 @@ body {
 
 .font-display {
   font-family: Georgia, "Times New Roman", Times, serif;
+}
+
+/* Main dashboard panel: light base + subtle topo / noise */
+.scout-main-bg {
+  background-color: #fffaf4;
+  background-image:
+    radial-gradient(ellipse 120% 80% at 50% -30%, rgba(217, 119, 6, 0.06), transparent),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(146, 64, 14, 0.018) 2px,
+      rgba(146, 64, 14, 0.018) 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 2px,
+      rgba(146, 64, 14, 0.014) 2px,
+      rgba(146, 64, 14, 0.014) 3px
+    );
 }
