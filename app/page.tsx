@@ -1,7 +1,16 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { getSafetyReport, type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
+import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
+import {
+  calculateFireRisk,
+  calculateAirQualityRisk,
+  calculateWeatherAlertness,
+  calculateWaterAccess,
+  calculateBearRisk,
+  calculateOverallSafetyScore,
+  getRiskLevel,
+} from "@/lib/riskScoring";
 import { DashboardCharts } from "@/app/components/dashboard-charts";
 
 function formatRange(startDate: string, endDate: string) {
@@ -10,6 +19,7 @@ function formatRange(startDate: string, endDate: string) {
   const formatter = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
   return `${formatter.format(start)} - ${formatter.format(end)}`;
 }
@@ -35,6 +45,10 @@ const detailTextByMetric: Record<string, string[]> = {
   "Weather Alertness": [
     "Mountain weather can change within hours, especially late afternoon and overnight.",
     "Plan layers, rain protection, and a quick shelter strategy before reaching remote sections.",
+  ],
+  "Bear Risk": [
+    "Store all food and scented items in bear-proof containers or hang them properly.",
+    "Make noise while hiking and avoid hiking at dawn/dusk when bears are most active.",
   ],
 };
 
@@ -112,6 +126,117 @@ function pillToneForLabel(pill: string) {
   return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
 }
 
+type ReportResult = {
+  report: SafetyReport;
+  temps: number[];
+  fireRisk: number;
+  airRisk: number;
+  bearRisk: number;
+  airQualityUnavailable: boolean;
+};
+
+async function generateSafetyReportFromAPI(
+  address: string,
+  startDate: string,
+  endDate: string,
+  distance: number
+): Promise<ReportResult> {
+  try {
+    const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
+    console.log("Fetching conditions from:", url);
+    
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error ?? `Failed to fetch conditions data: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const { weather, airQuality, airQualityUnavailable, fire, location, water } = data;
+
+    // Parse water data - check if any water features found
+
+    // For wildlife, use a simple calculation for now
+    const wildlifeData = { bears: 0 }; // Placeholder, can be expanded later
+
+    // Calculate individual risk scores
+    const weatherDaily = weather?.daily || {};
+    const airHourly = airQuality?.hourly?.us_aqi || [];
+
+    // Use first day for initial assessment
+    const fireRisk = calculateFireRisk(fire, weatherDaily, startDate, endDate);
+    const airQualityRisk = calculateAirQualityRisk(airHourly);
+    const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate);
+    const hasWater = water && water.elements && water.elements.length > 0;
+    const waterAccess = calculateWaterAccess(hasWater, distance);
+    
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    const seenMonths = new Set<number>();
+    const cur = new Date(startDateObj);
+    while (cur <= endDateObj) {
+      seenMonths.add(cur.getMonth() + 1);
+      cur.setMonth(cur.getMonth() + 1);
+    }
+    const bearRisk = Math.max(
+      ...Array.from(seenMonths).map((m) => calculateBearRisk(wildlifeData.bears || 0, location?.lat || 39, m))
+    );
+
+    const overallSafety = calculateOverallSafetyScore(
+      fireRisk,
+      airQualityRisk,
+      weatherAlertness,
+      waterAccess,
+      bearRisk
+    );
+
+    const metrics = [
+      {
+        label: "Fire Risk",
+        value: 100 - fireRisk, // Invert: lower risk score = higher safety
+        note: `Fire risk index based on active fires, wind conditions (${weatherDaily.windspeed_10m_max?.[0]?.toFixed(1) || 0} km/h), and precipitation.`,
+        icon: "🔥",
+      },
+      {
+        label: "Air Quality",
+        value: 100 - airQualityRisk,
+        note: `Air quality index currently at ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
+        icon: "💨",
+      },
+      {
+        label: "Weather Alertness",
+        value: 100 - weatherAlertness,
+        note: `Weather conditions show precipitation at ${weatherDaily.precipitation_sum?.[0]?.toFixed(1) || 0}mm risk of severe weather.`,
+        icon: "⛈️",
+      },
+      {
+        label: "Water Access",
+        value: waterAccess,
+        note: "Water availability in the area based on nearby streams and water features.",
+        icon: "💧",
+      },
+      {
+        label: "Bear Risk",
+        value: 100 - bearRisk,
+        note: `Bear activity risk based on wildlife data and season.`,
+        icon: "🐻",
+      },
+    ];
+
+    return {
+      report: { overallScore: overallSafety, status: getRiskLevel(overallSafety), metrics },
+      temps: weatherDaily.temperature_2m_max || [],
+      fireRisk,
+      airRisk: airQualityRisk,
+      bearRisk,
+      airQualityUnavailable: !!airQualityUnavailable,
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+
 export default function Home() {
   const [siteType, setSiteType] = useState<"campsite" | "trail">("campsite");
   const [address, setAddress] = useState("");
@@ -119,9 +244,16 @@ export default function Home() {
   const [endDate, setEndDate] = useState("");
   const [trailDistance, setTrailDistance] = useState("");
   const [report, setReport] = useState<SafetyReport | null>(null);
+  const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
 
   const chartSeed = report?.overallScore ?? 72;
+
+  const tripDays =
+    startDate && endDate
+      ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1
+      : 0;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -130,14 +262,24 @@ export default function Home() {
     const normalizedEndDate = siteType === "campsite" ? endDate : normalizedStartDate;
     const querySeed =
       siteType === "trail" ? `${address} | distance:${trailDistance}` : address;
+    const distanceNum = siteType === "trail" ? (parseFloat(trailDistance) || 10) * 1.60934 : 10;
 
-    const nextReport = await getSafetyReport(
-      querySeed,
-      normalizedStartDate,
-      normalizedEndDate,
-    );
-    setReport(nextReport);
-    setExpandedMetric({});
+    setErrorMessage(null);
+    try {
+      const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
+        querySeed,
+        normalizedStartDate,
+        normalizedEndDate,
+        distanceNum
+      );
+      setReport(nextReport);
+      setChartData(meta);
+      setExpandedMetric({});
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
+      setReport(null);
+      setChartData(null);
+    }
   };
 
   const overall = report ? overallPill(report.overallScore) : null;
@@ -264,6 +406,12 @@ export default function Home() {
             </div>
           </form>
 
+          {errorMessage && (
+            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          )}
+
           {report && (
             <section className="mt-10">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -356,17 +504,21 @@ export default function Home() {
                                     ? "Water Sources"
                                     : "Current Temp"}
                             </p>
-                            <span
-                              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${pillToneForLabel(secondary.pill)}`}
-                            >
-                              {secondary.pill}
-                            </span>
+                            {!(metric.label === "Air Quality" && chartData?.airQualityUnavailable) && (
+                              <span
+                                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${pillToneForLabel(secondary.pill)}`}
+                              >
+                                {secondary.pill}
+                              </span>
+                            )}
                           </div>
                           <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
-                            {primary.value}
+                            {metric.label === "Air Quality" && chartData?.airQualityUnavailable ? "N/A" : primary.value}
                           </p>
-                          <p className="mt-1 text-sm text-[#6b7078]">{primary.subtitle}</p>
-                          <p className="mt-2 text-xs text-[#8b8e94]">{secondary.line}</p>
+                          <p className="mt-1 text-sm text-[#6b7078]">
+                            {metric.label === "Air Quality" && chartData?.airQualityUnavailable ? "Air quality forecasts are only available 5 days ahead (CAMS model limit)" : primary.subtitle}
+                          </p>
+                          <p className="mt-2 text-xs text-[#8b8e94]">{metric.label === "Air Quality" && chartData?.airQualityUnavailable ? "" : secondary.line}</p>
                           <div className="mt-4">
                             <button
                               type="button"
@@ -399,11 +551,25 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              {(tripDays > 5 || tripDays > 10) && (
+                <p className="mt-4 text-xs text-[#8b8e94]">
+                  Data coverage limits for this {tripDays}-day trip —{" "}
+                  <span className="font-medium">Air quality:</span> 5 days ahead (CAMS model);{" "}
+                  {tripDays > 10 && <><span className="font-medium">Fire proximity:</span> past 10 days (NASA FIRMS); </>}
+                  <span className="font-medium">Wind, precipitation &amp; temperature:</span> 16 days ahead.
+                </p>
+              )}
             </section>
           )}
 
           <div className={report ? "mt-10 border-t border-[#e5e7eb] pt-10" : "mt-10"}>
-            <DashboardCharts chartSeed={chartSeed} />
+            <DashboardCharts
+              chartSeed={chartSeed}
+              temps={chartData?.temps}
+              fireRisk={chartData?.fireRisk}
+              airRisk={chartData?.airRisk}
+              bearRisk={chartData?.bearRisk}
+            />
           </div>
         </div>
       </div>
