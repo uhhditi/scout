@@ -404,6 +404,10 @@ export default function Home() {
       : report.overallScore
     : 7.2;
   const chartSeed = normalizedOverallScore * 10;
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const maxForecastDate = new Date();
+  maxForecastDate.setDate(maxForecastDate.getDate() + 16);
+  const maxForecastIso = maxForecastDate.toISOString().slice(0, 10);
 
   const tripDays =
     startDate && endDate
@@ -418,6 +422,9 @@ export default function Home() {
     const distanceNum = 10;
 
     setErrorMessage(null);
+    setReport(null);
+    setChartData(null);
+    setExpandedMetric({});
     setIsScouting(true);
     try {
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
@@ -467,6 +474,9 @@ export default function Home() {
             className="font-display mt-8 rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-lg ring-1 ring-[#f5ecde] backdrop-blur-sm sm:mt-10 sm:p-6"
           >
             <div className="flex flex-col gap-3">
+              <p className="text-sm text-[#6b7078]">
+                Enter campsite address to get started
+              </p>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
                 <label className="relative flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
                   <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
@@ -475,11 +485,14 @@ export default function Home() {
                     required
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Yosemite Valley, CA"
+                    placeholder="Yellowstone National Park, WY 82190"
                     className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
                   />
                 </label>
               </div>
+              <p className="text-xs text-[#7b8189]">
+                Forecast coverage currently supports trips up to 16 days from today.
+              </p>
 
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="relative flex items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
@@ -488,8 +501,21 @@ export default function Home() {
                   <input
                     type="date"
                     required
+                    min={todayIso}
+                    max={maxForecastIso}
                     value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      if (!nextStart) {
+                        setStartDate("");
+                        return;
+                      }
+                      const clampedStart = nextStart > maxForecastIso ? maxForecastIso : nextStart;
+                      setStartDate(clampedStart);
+                      if (endDate && endDate < clampedStart) {
+                        setEndDate(clampedStart);
+                      }
+                    }}
                     className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
                   />
                 </label>
@@ -498,9 +524,22 @@ export default function Home() {
                   <input
                     type="date"
                     required
-                    min={startDate || undefined}
+                    min={startDate || todayIso}
+                    max={maxForecastIso}
                     value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
+                    onChange={(e) => {
+                      const nextEnd = e.target.value;
+                      if (!nextEnd) {
+                        setEndDate("");
+                        return;
+                      }
+                      let clampedEnd = nextEnd > maxForecastIso ? maxForecastIso : nextEnd;
+                      const minEnd = startDate || todayIso;
+                      if (clampedEnd < minEnd) {
+                        clampedEnd = minEnd;
+                      }
+                      setEndDate(clampedEnd);
+                    }}
                     className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
                   />
                 </label>
@@ -687,6 +726,8 @@ export default function Home() {
                         )}
                         <p className="mt-2 text-xs text-[#8b8e94]">
                           {metric.label === "Fire Risk"
+                            ? ""
+                            : metric.label === "Air Quality"
                             ? ""
                             : metric.label === "Air Quality" && chartData?.airQualityUnavailable
                             ? ""

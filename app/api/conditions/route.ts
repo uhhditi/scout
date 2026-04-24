@@ -9,20 +9,40 @@ export async function GET(request:NextRequest) {
         return NextResponse.json({error: 'Missing address or startDate or endDate or distance'}, {status:400})
     }
 
-//Add geocoding and fetch latitude and longitude 
-const geoRes = await fetch(
-    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
-    {headers: {'User-Agent': 'scout-app'}}
-)
-if (!geoRes.ok) {
-    return NextResponse.json({ error: `Geocoding fetch failed (${geoRes.status})` }, { status: 502 })
+// Add geocoding and fetch latitude and longitude with fallback queries.
+const queryVariants = [
+    address,
+    // Drop ZIP for better matching on POIs/park roads.
+    address.replace(/\s+\d{5}(?:-\d{4})?$/, "").trim(),
+    // Keep only the last 3 comma-separated segments (often place, state, ZIP).
+    address.split(",").map((part) => part.trim()).slice(-3).join(", "),
+    // Keep only the last 2 comma-separated segments (often city/state).
+    address.split(",").map((part) => part.trim()).slice(-2).join(", "),
+]
+const uniqueQueries = Array.from(new Set(queryVariants.filter(Boolean)))
+
+let geocodeMatch: { lat: string; lon: string } | null = null
+for (const query of uniqueQueries) {
+    const geoRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=us`,
+        {headers: {'User-Agent': 'scout-app'}}
+    )
+    if (!geoRes.ok) {
+        continue
+    }
+    const geoData = await geoRes.json()
+    if (Array.isArray(geoData) && geoData.length > 0) {
+        geocodeMatch = geoData[0]
+        break
+    }
 }
-const geoData = await geoRes.json()
-if (!geoData.length) {
-    return NextResponse.json({error: 'Address not found'}, {status:404})
+
+if (!geocodeMatch) {
+    return NextResponse.json({error: 'Address not found. Try a more specific address, nearby landmark, or city/state.'}, {status:404})
 }
-const lat = parseFloat(geoData[0].lat)
-const lon = parseFloat(geoData[0].lon)
+
+const lat = parseFloat(geocodeMatch.lat)
+const lon = parseFloat(geocodeMatch.lon)
 const startDateObj = new Date(startDate)
 const endDateObj = new Date(endDate)
 if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
