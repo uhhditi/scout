@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
 import {
   calculateFireRisk,
@@ -397,6 +397,36 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
   const [isScouting, setIsScouting] = useState(false);
+  const [siteType, setSiteType] = useState<"campsite" | "trail">("campsite");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleAddressChange = (value: string) => {
+    setAddress(value);
+    setShowSuggestions(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) { setSuggestions([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/geocode?q=${encodeURIComponent(value)}`);
+        const data: string[] = await res.json();
+        setSuggestions(data);
+        setShowSuggestions(data.length > 0);
+      } catch { setSuggestions([]); }
+    }, 300);
+  };
 
   const normalizedOverallScore = report
     ? report.overallScore > 10
@@ -478,17 +508,62 @@ export default function Home() {
                 Enter campsite address to get started
               </p>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-                <label className="relative flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
-                  <input
-                    type="text"
-                    required
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Yellowstone National Park, WY 82190"
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
-                  />
-                </label>
+                <div className="flex w-full shrink-0 gap-2 rounded-xl border border-[#e8ddcc] bg-white p-1.5 sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setSiteType("campsite")}
+                    className={`rounded-lg px-4 py-2.5 text-sm font-semibold sm:text-base ${
+                      siteType === "campsite"
+                        ? "bg-[#ea8a12] text-white"
+                        : "text-[#6d7279] hover:text-[#1a1c1e]"
+                    }`}
+                  >
+                    Campsite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSiteType("trail")}
+                    className={`rounded-lg px-4 py-2.5 text-sm font-semibold sm:text-base ${
+                      siteType === "trail"
+                        ? "bg-[#ea8a12] text-white"
+                        : "text-[#6d7279] hover:text-[#1a1c1e]"
+                    }`}
+                  >
+                    Trail
+                  </button>
+                </div>
+
+                <div ref={suggestionsRef} className="relative min-w-0 flex-1">
+                  <label className="relative flex min-w-0 w-full items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
+                    <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
+                    <input
+                      type="text"
+                      required
+                      value={address}
+                      onChange={(e) => handleAddressChange(e.target.value)}
+                      onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                      placeholder="Yosemite Valley, CA"
+                      className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
+                    />
+                  </label>
+                  {showSuggestions && (
+                    <ul className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-[#e8ddcc] bg-white shadow-lg">
+                      {suggestions.map((s) => (
+                        <li
+                          key={s}
+                          onMouseDown={() => {
+                            setAddress(s);
+                            setSuggestions([]);
+                            setShowSuggestions(false);
+                          }}
+                          className="cursor-pointer truncate px-4 py-2.5 text-sm text-[#1a1c1e] hover:bg-[#fdf6ec]"
+                        >
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
               <p className="text-xs text-[#7b8189]">
                 Forecast coverage currently supports trips up to 16 days from today.
