@@ -23,7 +23,7 @@ export function calculateFireRisk(
   let maxRisk = 0;
 
   for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
-    let score = 20; // baseline - most days are low risk
+    let score = 5; // baseline - most days are low risk
 
     // Factor 1: Active fires nearby (NASA FIRMS data)
     if (fireData && fireData.length > 0) {
@@ -226,9 +226,26 @@ export function calculateBearRisk(
 }
 
 /**
- * Overall Safety Score (1-100)
- * Combines all risk factors
- * Higher = safer, Lower = more risky
+ * Bear danger rating (1-5)
+ * 5 = highest expected bear activity
+ */
+export function getBearDangerRating(
+  elevation: number,
+  latitude: number,
+  month: number
+): number {
+  const score = calculateBearRisk(elevation, latitude, month);
+
+  if (score >= 80) return 5; // Extreme
+  if (score >= 60) return 4; // High
+  if (score >= 40) return 3; // Moderate
+  if (score >= 25) return 2; // Low
+  return 1; // Minimal
+}
+
+/**
+ * Overall Safety Score (0-10)
+ * Weighted by real-world severity of each risk class
  */
 export function calculateOverallSafetyScore(
   fireRisk: number,
@@ -237,27 +254,37 @@ export function calculateOverallSafetyScore(
   waterAccess: number,
   bearRisk: number
 ): number {
-  // Convert risks to safety (100 - risk = safety)
   const fireSafety = 100 - fireRisk;
   const airSafety = 100 - airQualityRisk;
   const weatherSafety = 100 - weatherAlertness;
-  const waterSafety = 100 - waterAccess; // Already inverted, but keep consistent
+  const waterSafety = 100 - waterAccess;
   const bearSafety = 100 - bearRisk;
 
-  // Average all factors (you can weight these differently)
-  const overallSafety = Math.round(
-    (fireSafety + airSafety + weatherSafety + waterSafety + bearSafety) / 5
-  );
+  const weighted =
+    fireSafety * 0.3 +
+    weatherSafety * 0.25 +
+    airSafety * 0.2 +
+    waterSafety * 0.15 +
+    bearSafety * 0.1;
 
-  return overallSafety;
+  // Convert 0-100 to 0-10 rounded to 1 decimal.
+  return Math.round(weighted) / 10;
 }
 
 /**
  * Get risk level label
  */
-export function getRiskLevel(score: number): string {
-  if (score >= 80) return "Great conditions";
-  if (score >= 65) return "Use caution";
-  if (score >= 50) return "Significant risk";
-  return "High risk day";
+export function getRiskLevel(
+  score: number
+): string {
+  if (score >= 8.2) {
+    return "Weather looks stable, air quality is clean, and no major hazards are flagged for your trip window. Good conditions to proceed as planned.";
+  }
+  if (score >= 6.8) {
+    return "Most conditions are manageable but at least one factor warrants attention. Review the cards below and prepare accordingly.";
+  }
+  if (score >= 5.2) {
+    return "Several risk factors are elevated for this location and timeframe. Extra preparation is recommended before heading out.";
+  }
+  return "Significant hazards are present for this trip window. Carefully review all conditions below and consider adjusting your plans.";
 }
