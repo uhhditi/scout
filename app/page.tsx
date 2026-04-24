@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
 import {
   calculateFireRisk,
@@ -247,6 +247,35 @@ export default function Home() {
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleAddressChange = (value: string) => {
+    setAddress(value);
+    setShowSuggestions(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) { setSuggestions([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/geocode?q=${encodeURIComponent(value)}`);
+        const data: string[] = await res.json();
+        setSuggestions(data);
+        setShowSuggestions(data.length > 0);
+      } catch { setSuggestions([]); }
+    }, 300);
+  };
 
   const chartSeed = report?.overallScore ?? 72;
 
@@ -334,17 +363,37 @@ export default function Home() {
                   </button>
                 </div>
 
-                <label className="relative flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
-                  <input
-                    type="text"
-                    required
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Yosemite Valley, CA"
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
-                  />
-                </label>
+                <div ref={suggestionsRef} className="relative min-w-0 flex-1">
+                  <label className="relative flex min-w-0 w-full items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
+                    <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
+                    <input
+                      type="text"
+                      required
+                      value={address}
+                      onChange={(e) => handleAddressChange(e.target.value)}
+                      onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                      placeholder="Yosemite Valley, CA"
+                      className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
+                    />
+                  </label>
+                  {showSuggestions && (
+                    <ul className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-[#e8ddcc] bg-white shadow-lg">
+                      {suggestions.map((s) => (
+                        <li
+                          key={s}
+                          onMouseDown={() => {
+                            setAddress(s);
+                            setSuggestions([]);
+                            setShowSuggestions(false);
+                          }}
+                          className="cursor-pointer truncate px-4 py-2.5 text-sm text-[#1a1c1e] hover:bg-[#fdf6ec]"
+                        >
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
 
               {siteType === "campsite" ? (
