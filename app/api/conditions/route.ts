@@ -43,6 +43,15 @@ if (!geocodeMatch) {
 
 const lat = parseFloat(geocodeMatch.lat)
 const lon = parseFloat(geocodeMatch.lon)
+let elevation: number | null = null
+const elevationRes = await fetch(
+    `https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`
+)
+if (elevationRes.ok) {
+    const elevationData = await elevationRes.json()
+    const value = elevationData?.elevation?.[0]
+    elevation = typeof value === "number" ? value : null
+}
 const startDateObj = new Date(startDate)
 const endDateObj = new Date(endDate)
 if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
@@ -133,7 +142,7 @@ if (waterRes.ok) {
 }
 
 return NextResponse.json({
-    location: {lat, lon},
+    location: {lat, lon, elevation},
     weather: weatherData,
     airQuality: airData,
     airQualityUnavailable,

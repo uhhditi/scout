@@ -290,12 +290,13 @@ async function generateSafetyReportFromAPI(
       seenMonths.add(cur.getMonth() + 1);
       cur.setMonth(cur.getMonth() + 1);
     }
+    const areaElevation = Number(location?.elevation ?? wildlifeData.bears ?? 0);
     const bearRisk = Math.max(
-      ...Array.from(seenMonths).map((m) => calculateBearRisk(wildlifeData.bears || 0, location?.lat || 39, m))
+      ...Array.from(seenMonths).map((m) => calculateBearRisk(areaElevation, location?.lat || 39, m))
     );
     const bearDangerRating = Math.max(
       ...Array.from(seenMonths).map((m) =>
-        getBearDangerRating(wildlifeData.bears || 0, location?.lat || 39, m)
+        getBearDangerRating(areaElevation, location?.lat || 39, m)
       )
     );
     const strongestWind = windWindow.length ? Math.max(...windWindow) : 0;
@@ -311,7 +312,6 @@ async function generateSafetyReportFromAPI(
         : "No active fire hotspots were detected in your search area.",
       `Weather impact: peak wind is ${strongestWind.toFixed(1)} km/h (${windLevel}), and precipitation ranges ${driestDay.toFixed(1)}-${wettestDay.toFixed(1)} mm (${precipitationLevel}). Higher wind with lower rainfall increases fire spread potential.`,
     ];
-    const areaElevation = Number(location?.elevation ?? wildlifeData.bears ?? 0);
     const bearRiskDetails = [
       `Your area elevation is ${Math.round(areaElevation)} m, and higher elevation areas generally see more bear activity.`,
       "Store all food and scented items in bear-proof containers or hang them properly.",
@@ -397,7 +397,6 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
   const [isScouting, setIsScouting] = useState(false);
-  const [siteType, setSiteType] = useState<"campsite" | "trail">("campsite");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -508,31 +507,6 @@ export default function Home() {
                 Enter campsite address to get started
               </p>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-                <div className="flex w-full shrink-0 gap-2 rounded-xl border border-[#e8ddcc] bg-white p-1.5 sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={() => setSiteType("campsite")}
-                    className={`rounded-lg px-4 py-2.5 text-sm font-semibold sm:text-base ${
-                      siteType === "campsite"
-                        ? "bg-[#ea8a12] text-white"
-                        : "text-[#6d7279] hover:text-[#1a1c1e]"
-                    }`}
-                  >
-                    Campsite
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSiteType("trail")}
-                    className={`rounded-lg px-4 py-2.5 text-sm font-semibold sm:text-base ${
-                      siteType === "trail"
-                        ? "bg-[#ea8a12] text-white"
-                        : "text-[#6d7279] hover:text-[#1a1c1e]"
-                    }`}
-                  >
-                    Trail
-                  </button>
-                </div>
-
                 <div ref={suggestionsRef} className="relative min-w-0 flex-1">
                   <label className="relative flex min-w-0 w-full items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
                     <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
