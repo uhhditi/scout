@@ -16,8 +16,12 @@ import {
 import { DashboardCharts } from "@/app/components/dashboard-charts";
 
 function formatRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return "Select dates";
   const start = new Date(startDate);
   const end = new Date(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "Select dates";
+  }
   const formatter = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -487,10 +491,10 @@ export default function Home() {
               </span>
               <p className="font-display text-2xl font-bold text-[#1a1c1e]">Scout</p>
             </div>
-            <h1 className="font-display mt-4 text-[clamp(1.9rem,4.8vw,3.2rem)] leading-[1.05] font-bold whitespace-nowrap text-[#1a1c1e]">
+            <h1 className="font-display mt-4 text-[clamp(1.9rem,4.8vw,3.2rem)] leading-[1.05] font-bold text-[#1a1c1e]">
               Camp With Ease, Scout Your Site.
             </h1>
-            <p className="mt-3 text-[clamp(0.95rem,2.2vw,1.15rem)] whitespace-nowrap font-semibold text-[#4f545c]">
+            <p className="mt-3 max-w-3xl text-[clamp(0.95rem,2.2vw,1.15rem)] font-semibold text-[#4f545c]">
               Built for U.S. trips and most reliable for near-term planning.
             </p>
           </header>

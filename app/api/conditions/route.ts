@@ -5,7 +5,6 @@ export async function GET(request:NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
     const distance = searchParams.get('distance')
-    const debugEnabled = process.env.NODE_ENV !== 'production' && searchParams.get('debug') === '1'
     if (!address || !startDate || !endDate || !distance) {
         return NextResponse.json({error: 'Missing address or startDate or endDate or distance'}, {status:400})
     }
@@ -155,39 +154,6 @@ if (fireRes.ok) {
         .filter((row: Record<string, unknown> | null): row is Record<string, unknown> => row !== null)
 }
 
-if (debugEnabled) {
-    console.log('[conditions:debug]', {
-        geocode: {
-            url: geocodeUrl,
-            selected: geocodeMatch,
-        },
-        elevation: {
-            url: elevationUrl,
-            status: elevationRes.status,
-            elevation,
-        },
-        weather: {
-            url: weatherUrl,
-            status: weatherRes.status,
-            dailyDays: weatherData?.daily?.time?.length ?? 0,
-            sampleWeatherCode: weatherData?.daily?.weathercode?.[0] ?? null,
-        },
-        airQuality: {
-            url: airQualityUrl,
-            status: airRes.status,
-            hourlyPoints: airData?.hourly?.us_aqi?.length ?? 0,
-            sampleAqi: airData?.hourly?.us_aqi?.[0] ?? null,
-        },
-        fire: {
-            url: fireUrl,
-            status: fireRes?.status ?? null,
-            source: 'NIFC_WFIGS_Incident_Locations_Current',
-            rows: Array.isArray(fireData) ? fireData.length : 0,
-            sample: Array.isArray(fireData) && fireData.length > 0 ? fireData[0] : null,
-        },
-    })
-}
-
 return NextResponse.json({
     location: {lat, lon, elevation},
     weather: weatherData,
@@ -202,28 +168,6 @@ return NextResponse.json({
                 startDate: formattedStart,
                 endDate: formattedEnd,
             },
-        }
-        : {}),
-    ...(debugEnabled
-        ? {
-            debug: {
-                geocodeUrl,
-                elevationUrl,
-                weatherUrl,
-                airQualityUrl,
-                fireUrl,
-                statuses: {
-                    elevation: elevationRes.status,
-                    weather: weatherRes.status,
-                    airQuality: airRes.status,
-                    fire: fireRes?.status ?? null,
-                },
-                counts: {
-                    weatherDays: weatherData?.daily?.time?.length ?? 0,
-                    aqiPoints: airData?.hourly?.us_aqi?.length ?? 0,
-                    fireRows: Array.isArray(fireData) ? fireData.length : 0,
-                },
-            }
         }
         : {}),
 })
