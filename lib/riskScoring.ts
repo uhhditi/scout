@@ -272,7 +272,7 @@ export function calculateBearRisk(
   latitude: number,
   month: number
 ): number {
-  let score = 20; // baseline
+  let score = 15; // baseline
 
   // Elevation factor: Bears more common in mountainous areas
   if (elevation > 2500) {
@@ -280,25 +280,25 @@ export function calculateBearRisk(
   } else if (elevation > 1500) {
     score += 20; // Mid-mountain
   } else if (elevation > 500) {
-    score += 10; // Foothills
+    score += 8; // Foothills
   }
 
   // Season factor: Bears more active in certain months
   // Spring (3-5): Emerging from hibernation, hungry
   if (month >= 3 && month <= 5) {
-    score += 15;
+    score += 12;
   }
   // Summer (6-8): Active, cubs around
   else if (month >= 6 && month <= 8) {
-    score += 20;
+    score += 17;
   }
   // Fall (9-11): Fattening up, more aggressive
   else if (month >= 9 && month <= 11) {
-    score += 25;
+    score += 24;
   }
   // Winter (12, 1-2): Hibernating, lower activity
   else {
-    score -= 15;
+    score -= 20;
   }
 
   // Latitude factor: Different bear species in different regions
@@ -323,10 +323,10 @@ export function getBearDangerRating(
 ): number {
   const score = calculateBearRisk(elevation, latitude, month);
 
-  if (score >= 80) return 5; // Extreme
-  if (score >= 60) return 4; // High
-  if (score >= 40) return 3; // Moderate
-  if (score >= 25) return 2; // Low
+  if (score >= 75) return 5; // Extreme
+  if (score >= 56) return 4; // High
+  if (score >= 38) return 3; // Moderate
+  if (score >= 22) return 2; // Low
   return 1; // Minimal
 }
 

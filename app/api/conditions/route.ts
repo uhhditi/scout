@@ -5,7 +5,7 @@ export async function GET(request:NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
     const distance = searchParams.get('distance')
-    const debugEnabled = searchParams.get('debug') === '1'
+    const debugEnabled = process.env.NODE_ENV !== 'production' && searchParams.get('debug') === '1'
     if (!address || !startDate || !endDate || !distance) {
         return NextResponse.json({error: 'Missing address or startDate or endDate or distance'}, {status:400})
     }
@@ -64,16 +64,14 @@ if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
 
 const maxForecastDate = new Date()
 maxForecastDate.setDate(maxForecastDate.getDate() + 16)
-if (startDateObj > maxForecastDate) {
-    return NextResponse.json(
-        { error: 'Start date is too far in the future. Weather forecasts are only available up to 16 days ahead.' },
-        { status: 400 }
-    )
-}
-const clampedEnd = endDateObj > maxForecastDate ? maxForecastDate : endDateObj
+const clampedStart = startDateObj > maxForecastDate ? maxForecastDate : startDateObj
+const clampedEndCandidate = endDateObj > maxForecastDate ? maxForecastDate : endDateObj
+const clampedEnd = clampedEndCandidate < clampedStart ? clampedStart : clampedEndCandidate
 
-const formattedStart = startDateObj.toISOString().split('T')[0]
+const formattedStart = clampedStart.toISOString().split('T')[0]
 const formattedEnd = clampedEnd.toISOString().split('T')[0]
+const forecastDateClamped =
+    startDateObj > maxForecastDate || endDateObj > maxForecastDate
 
 // Fetch weather
 const weatherUrl =
@@ -196,6 +194,16 @@ return NextResponse.json({
     airQuality: airData,
     airQualityUnavailable,
     fire: fireData,
+    ...(forecastDateClamped
+        ? {
+            forecastNotice:
+                'Forecast inputs were capped to the latest available weather window (up to 16 days ahead).',
+            forecastWindowUsed: {
+                startDate: formattedStart,
+                endDate: formattedEnd,
+            },
+        }
+        : {}),
     ...(debugEnabled
         ? {
             debug: {
