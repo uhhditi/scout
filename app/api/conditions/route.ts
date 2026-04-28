@@ -5,6 +5,7 @@ export async function GET(request:NextRequest) {
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
     const distance = searchParams.get('distance')
+    const debugEnabled = searchParams.get('debug') === '1'
     if (!address || !startDate || !endDate || !distance) {
         return NextResponse.json({error: 'Missing address or startDate or endDate or distance'}, {status:400})
     }
@@ -22,9 +23,11 @@ const queryVariants = [
 const uniqueQueries = Array.from(new Set(queryVariants.filter(Boolean)))
 
 let geocodeMatch: { lat: string; lon: string } | null = null
+let geocodeUrl = ''
 for (const query of uniqueQueries) {
+    geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=us`
     const geoRes = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=us`,
+        geocodeUrl,
         {headers: {'User-Agent': 'scout-app'}}
     )
     if (!geoRes.ok) {
@@ -43,6 +46,16 @@ if (!geocodeMatch) {
 
 const lat = parseFloat(geocodeMatch.lat)
 const lon = parseFloat(geocodeMatch.lon)
+let elevation: number | null = null
+const elevationUrl = `https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`
+const elevationRes = await fetch(
+    elevationUrl
+)
+if (elevationRes.ok) {
+    const elevationData = await elevationRes.json()
+    const value = elevationData?.elevation?.[0]
+    elevation = typeof value === "number" ? value : null
+}
 const startDateObj = new Date(startDate)
 const endDateObj = new Date(endDate)
 if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
@@ -63,81 +76,147 @@ const formattedStart = startDateObj.toISOString().split('T')[0]
 const formattedEnd = clampedEnd.toISOString().split('T')[0]
 
 // Fetch weather
-const weatherRes = await fetch(
+const weatherUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=weathercode,precipitation_sum,windspeed_10m_max,temperature_2m_max` +
     `&temperature_unit=fahrenheit&timezone=auto&start_date=${formattedStart}&end_date=${formattedEnd}`
-)
-if (!weatherRes.ok) {
-    return NextResponse.json({ error: `Weather fetch failed (${weatherRes.status})` }, { status: 502 })
-}
-const weatherData = await weatherRes.json()
-
-//Fetch air quality
-const airRes = await fetch(
+const airQualityUrl =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
     `&hourly=us_aqi&timezone=auto&start_date=${formattedStart}&end_date=${formattedEnd}`
-)
-const airQualityUnavailable = !airRes.ok
-const airData = airRes.ok ? await airRes.json() : { hourly: { us_aqi: [] } }
-
-// Fetch fire data from NASA FIRMS (MODIS/VIIRS)
-// Using public JSON endpoint with bbox
 const distanceNum = parseInt(distance) || 10
-// Calculate bbox: approximate square around lat,lon with side 2*distanceNum km
-const latOffset = distanceNum / 111.32; // 1 degree lat ~ 111.32 km
-const lonOffset = distanceNum / (111.32 * Math.cos(lat * Math.PI / 180)); // adjust for longitude
+// Fetch fire data from NIFC ArcGIS (current incident locations)
+// Pad fire search so incidents just outside the chosen radius still count as nearby.
+const fireSearchRadiusKm = Math.max(distanceNum * 1.4, 25)
+// Calculate bbox: approximate square around lat,lon with side 2*fireSearchRadiusKm
+const latOffset = fireSearchRadiusKm / 111.32; // 1 degree lat ~ 111.32 km
+const lonOffset = fireSearchRadiusKm / (111.32 * Math.cos(lat * Math.PI / 180)); // adjust for longitude
 const minLat = lat - latOffset;
 const maxLat = lat + latOffset;
 const minLon = lon - lonOffset;
 const maxLon = lon + lonOffset;
 const bbox = `${minLon},${minLat},${maxLon},${maxLat}`;
-const tripDays = Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-const firmsDays = Math.min(tripDays, 10); // FIRMS API max is 10 days
-const fireRes = await fetch(
-    `https://firms.modaps.eosdis.nasa.gov/api/area/json/MODIS_SP/MCD14DL/${firmsDays}/${bbox}`,
-    {headers: {'User-Agent': 'scout-app'}}
-)
-let fireData = null
+const fireParams = new URLSearchParams({
+    f: 'json',
+    where: '1=1',
+    geometry: bbox,
+    geometryType: 'esriGeometryEnvelope',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    outFields: '*',
+    returnGeometry: 'true',
+    outSR: '4326',
+})
+const fireUrl =
+    `https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/` +
+    `WFIGS_Incident_Locations_Current/FeatureServer/0/query?${fireParams.toString()}`
+// Run independent upstream data fetches in parallel for faster response times.
+const [weatherRes, airRes, fireRes] = await Promise.all([
+    fetch(weatherUrl),
+    fetch(airQualityUrl),
+    fetch(fireUrl, {
+        headers: {
+            'User-Agent': 'scout-app',
+            Accept: 'application/json',
+        }
+    }),
+])
+
+if (!weatherRes.ok) {
+    return NextResponse.json({ error: `Weather fetch failed (${weatherRes.status})` }, { status: 502 })
+}
+const weatherData = await weatherRes.json()
+
+const airQualityUnavailable = !airRes.ok
+const airData = airRes.ok ? await airRes.json() : { hourly: { us_aqi: [] } }
+
+let fireData: Array<Record<string, unknown>> = []
 if (fireRes.ok) {
-    fireData = await fireRes.json()
-} else {
-    // Fallback to empty array if NASA FIRMS fails
-    fireData = []
+    const fireJson = await fireRes.json()
+    const features = Array.isArray(fireJson?.features) ? fireJson.features : []
+    fireData = features
+        .filter((feature: { attributes?: Record<string, unknown> }) => {
+            const category = String(feature?.attributes?.IncidentTypeCategory ?? '').toUpperCase()
+            return category === 'WF'
+        })
+        .map((feature: { geometry?: { x?: number; y?: number }; attributes?: Record<string, unknown> }) => {
+            const lat = feature?.geometry?.y
+            const lon = feature?.geometry?.x
+            if (typeof lat !== 'number' || typeof lon !== 'number') {
+                return null
+            }
+            return {
+                lat,
+                lon,
+                incidentName: feature.attributes?.IncidentName ?? null,
+                incidentSize: feature.attributes?.IncidentSize ?? null,
+                dailyAcres: feature.attributes?.DailyAcres ?? null,
+                state: feature.attributes?.POOState ?? null,
+                discoveryDateTime: feature.attributes?.FireDiscoveryDateTime ?? null,
+            }
+        })
+        .filter((row: Record<string, unknown> | null): row is Record<string, unknown> => row !== null)
 }
 
-// Fetch water access using Overpass API (OpenStreetMap)
-const overpassQuery = `
-[out:json];
-(
-  way["natural"="water"](around:${distanceNum * 1000},${lat},${lon});
-  way["water"](around:${distanceNum * 1000},${lat},${lon});
-  node["natural"="spring"](around:${distanceNum * 1000},${lat},${lon});
-  node["amenity"="drinking_water"](around:${distanceNum * 1000},${lat},${lon});
-);
-out geom;
-`
-const waterRes = await fetch(
-    `https://overpass-api.de/api/interpreter`,
-    {
-        method: 'POST',
-        body: overpassQuery,
-        headers: {'User-Agent': 'scout-app'}
-    }
-)
-let waterData = null
-if (waterRes.ok) {
-    waterData = await waterRes.json()
-} else {
-    waterData = { elements: [] }
+if (debugEnabled) {
+    console.log('[conditions:debug]', {
+        geocode: {
+            url: geocodeUrl,
+            selected: geocodeMatch,
+        },
+        elevation: {
+            url: elevationUrl,
+            status: elevationRes.status,
+            elevation,
+        },
+        weather: {
+            url: weatherUrl,
+            status: weatherRes.status,
+            dailyDays: weatherData?.daily?.time?.length ?? 0,
+            sampleWeatherCode: weatherData?.daily?.weathercode?.[0] ?? null,
+        },
+        airQuality: {
+            url: airQualityUrl,
+            status: airRes.status,
+            hourlyPoints: airData?.hourly?.us_aqi?.length ?? 0,
+            sampleAqi: airData?.hourly?.us_aqi?.[0] ?? null,
+        },
+        fire: {
+            url: fireUrl,
+            status: fireRes?.status ?? null,
+            source: 'NIFC_WFIGS_Incident_Locations_Current',
+            rows: Array.isArray(fireData) ? fireData.length : 0,
+            sample: Array.isArray(fireData) && fireData.length > 0 ? fireData[0] : null,
+        },
+    })
 }
 
 return NextResponse.json({
-    location: {lat, lon},
+    location: {lat, lon, elevation},
     weather: weatherData,
     airQuality: airData,
     airQualityUnavailable,
     fire: fireData,
-    water: waterData
+    ...(debugEnabled
+        ? {
+            debug: {
+                geocodeUrl,
+                elevationUrl,
+                weatherUrl,
+                airQualityUrl,
+                fireUrl,
+                statuses: {
+                    elevation: elevationRes.status,
+                    weather: weatherRes.status,
+                    airQuality: airRes.status,
+                    fire: fireRes?.status ?? null,
+                },
+                counts: {
+                    weatherDays: weatherData?.daily?.time?.length ?? 0,
+                    aqiPoints: airData?.hourly?.us_aqi?.length ?? 0,
+                    fireRows: Array.isArray(fireData) ? fireData.length : 0,
+                },
+            }
+        }
+        : {}),
 })
 }
