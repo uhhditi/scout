@@ -1,41 +1,152 @@
 // Risk Scoring Functions - Convert raw API data to 1-100 risk scores
 // Higher score = higher risk
 
+const EARTH_RADIUS_KM = 6371;
+
+function haversineDistanceKm(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const p1 = (lat1 * Math.PI) / 180;
+  const p2 = (lat2 * Math.PI) / 180;
+  const dLat = p2 - p1;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * EARTH_RADIUS_KM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Parse NASA FIRMS JSON: array of rows, or common variants.
+ */
+export function extractFireCoordinates(fireData: unknown): { lat: number; lon: number }[] {
+  if (fireData == null) return [];
+  const rows: unknown[] = Array.isArray(fireData)
+    ? fireData
+    : typeof fireData === "object" &&
+        fireData !== null &&
+        "data" in fireData &&
+        Array.isArray((fireData as { data: unknown[] }).data)
+      ? (fireData as { data: unknown[] }).data
+      : typeof fireData === "object" &&
+          fireData !== null &&
+          "features" in fireData &&
+          Array.isArray((fireData as { features: { geometry?: { coordinates?: number[] } }[] }).features)
+        ? (fireData as { features: { geometry?: { coordinates?: number[] } }[] }).features
+            .map((f) => f.geometry?.coordinates)
+            .filter(
+              (c): c is number[] => Array.isArray(c) && c.length >= 2
+            )
+            .map((c) => ({ lat: c[1], lon: c[0] }))
+        : [];
+  const out: { lat: number; lon: number }[] = [];
+  for (const row of rows) {
+    if (row && typeof row === "object" && "geometry" in (row as object)) {
+      const g = (row as { geometry?: { coordinates?: number[] } }).geometry;
+      const c = g?.coordinates;
+      if (c && c.length >= 2) {
+        out.push({ lat: c[1], lon: c[0] });
+        continue;
+      }
+    }
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const rawLat = r.latitude ?? r.lat;
+    const rawLon = r.longitude ?? r.lon;
+    if (rawLat == null || rawLon == null) continue;
+    const lat = typeof rawLat === "number" ? rawLat : parseFloat(String(rawLat));
+    const lon = typeof rawLon === "number" ? rawLon : parseFloat(String(rawLon));
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      out.push({ lat, lon });
+    }
+  }
+  return out;
+}
+
+/** Shortest great-circle distance (km) from the campsite to any hotspot, or null if none. */
+export function getNearestFireDistanceKm(
+  fireData: unknown,
+  siteLat: number,
+  siteLon: number
+): number | null {
+  if (!Number.isFinite(siteLat) || !Number.isFinite(siteLon)) return null;
+  const points = extractFireCoordinates(fireData);
+  if (points.length === 0) return null;
+  let min = Infinity;
+  for (const p of points) {
+    const d = haversineDistanceKm(siteLat, siteLon, p.lat, p.lon);
+    if (d < min) min = d;
+  }
+  return min === Infinity ? null : min;
+}
+
+/**
+ * 0 = no hotspots / unknown; otherwise maps nearest distance to ~0..45 add-on (similar to old +40).
+ */
+function fireProximityAddFromMinKm(minKm: number | null, hasFires: boolean): number {
+  if (!hasFires) return 0;
+  if (minKm == null || !Number.isFinite(minKm)) return 20; // legacy: fires present but no coords
+  return Math.min(45, Math.round(38 * Math.exp(-minKm / 20)));
+}
+
 /**
  * Fire Risk Score (1-100)
  * Based on: Active fire proximity, weather conditions (wind, precipitation), season
  * Now considers the entire trip window by taking the maximum risk across all days
  */
 export function calculateFireRisk(
-  fireData: any[],
+  fireData: unknown,
   weatherDaily: {
     weathercode: number[];
     precipitation_sum: number[];
     windspeed_10m_max: number[];
   },
   startDate: string,
-  endDate: string
+  endDate: string,
+  siteLat?: number,
+  siteLon?: number
 ): number {
   const start = new Date(startDate);
   const end = new Date(endDate);
   const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+  const points = extractFireCoordinates(fireData);
+  const hasFires = points.length > 0;
+  let minFireKm: number | null = null;
+  if (
+    hasFires &&
+    siteLat != null &&
+    siteLon != null &&
+    Number.isFinite(siteLat) &&
+    Number.isFinite(siteLon)
+  ) {
+    for (const p of points) {
+      const d = haversineDistanceKm(siteLat, siteLon, p.lat, p.lon);
+      if (minFireKm === null || d < minFireKm) minFireKm = d;
+    }
+  }
+  const fireProximityAdd =
+    siteLat != null && siteLon != null && Number.isFinite(siteLat) && Number.isFinite(siteLon)
+      ? fireProximityAddFromMinKm(minFireKm, hasFires)
+      : fireProximityAddFromMinKm(null, hasFires);
 
   let maxRisk = 0;
 
   for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
     let score = 5; // baseline - most days are low risk
 
-    // Factor 1: Active fires nearby (NASA FIRMS data)
-    if (fireData && fireData.length > 0) {
-      score += 40; // significant risk if fires detected nearby
-    }
+    // Factor 1: Active fires — stronger when closer to the campsite (NASA FIRMS)
+    score += fireProximityAdd;
 
     // Factor 2: Low precipitation = higher fire risk
     const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
     if (precipitation < 1) {
-      score += 20;
+      score += 12;
     } else if (precipitation < 5) {
-      score += 10;
+      score += 6;
     } else if (precipitation > 10) {
       score -= 10; // Wet = lower risk
     }
@@ -153,30 +264,6 @@ export function calculateWeatherAlertness(
 }
 
 /**
- * Water Access Score (1-100)
- * Lower score = better access to water
- * Based on: Proximity to water features from OSM
- */
-export function calculateWaterAccess(
-  hasNearbyWater: boolean,
-  distanceToWaterKm?: number
-): number {
-  // If water is nearby, score is LOW (good access = low risk)
-  if (hasNearbyWater) {
-    if (distanceToWaterKm && distanceToWaterKm < 0.5) {
-      return 10; // Water very close
-    }
-    if (distanceToWaterKm && distanceToWaterKm < 2) {
-      return 25; // Water close
-    }
-    return 35; // Water in area
-  }
-
-  // No water nearby = higher score (harder to find water = higher risk)
-  return 75;
-}
-
-/**
  * Bear Risk Score (1-100)
  * Based on: Elevation, season, location type
  */
@@ -251,21 +338,18 @@ export function calculateOverallSafetyScore(
   fireRisk: number,
   airQualityRisk: number,
   weatherAlertness: number,
-  waterAccess: number,
   bearRisk: number
 ): number {
   const fireSafety = 100 - fireRisk;
   const airSafety = 100 - airQualityRisk;
   const weatherSafety = 100 - weatherAlertness;
-  const waterSafety = 100 - waterAccess;
   const bearSafety = 100 - bearRisk;
 
   const weighted =
-    fireSafety * 0.3 +
-    weatherSafety * 0.25 +
+    fireSafety * 0.35 +
+    weatherSafety * 0.3 +
     airSafety * 0.2 +
-    waterSafety * 0.15 +
-    bearSafety * 0.1;
+    bearSafety * 0.15;
 
   // Convert 0-100 to 0-10 rounded to 1 decimal.
   return Math.round(weighted) / 10;
