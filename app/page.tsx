@@ -16,8 +16,12 @@ import {
 import { DashboardCharts } from "@/app/components/dashboard-charts";
 
 function formatRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return "Select dates";
   const start = new Date(startDate);
   const end = new Date(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "Select dates";
+  }
   const formatter = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
