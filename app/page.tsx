@@ -108,7 +108,7 @@ function metricPrimary(metric: SafetyMetric) {
   switch (metric.label) {
     case "Fire Risk": {
       const level = Math.max(1, Math.min(5, Math.round(6 - (v / 100) * 5)));
-      return { value: `Risk ${level}`, subtitle: "Wildlife risk level based off proximity to wildfire and adverse conditions." };
+      return { value: `Risk ${level}`, subtitle: "Risk level based on current proximity to wildfire and adverse conditions." };
     }
     case "Air Quality": {
       const aqi = Math.round(Math.max(28, Math.min(165, 175 - v * 1.25)));
@@ -200,6 +200,11 @@ type ReportResult = {
   bearDangerRating: number;
   bearRiskDetails: string[];
   airQualityUnavailable: boolean;
+  forecastNotice?: string;
+  forecastWindowUsed?: {
+    startDate: string;
+    endDate: string;
+  };
 };
 
 async function generateSafetyReportFromAPI(
@@ -209,8 +214,7 @@ async function generateSafetyReportFromAPI(
   distance: number
 ): Promise<ReportResult> {
   try {
-    const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}&debug=1`;
-    console.log("Fetching conditions from:", url);
+    const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
     
     const response = await fetch(url);
 
@@ -220,7 +224,7 @@ async function generateSafetyReportFromAPI(
     }
 
     const data = await response.json();
-    const { weather, airQuality, airQualityUnavailable, fire, location } = data;
+    const { weather, airQuality, airQualityUnavailable, fire, location, forecastNotice, forecastWindowUsed } = data;
 
     // For wildlife, use a simple calculation for now
     const wildlifeData = { bears: 0 }; // Placeholder, can be expanded later
@@ -378,6 +382,8 @@ async function generateSafetyReportFromAPI(
       bearDangerRating,
       bearRiskDetails,
       airQualityUnavailable: !!airQualityUnavailable,
+      forecastNotice,
+      forecastWindowUsed,
     };
   } catch (error) {
     throw error;
@@ -484,8 +490,8 @@ export default function Home() {
             <h1 className="font-display mt-4 text-[clamp(1.9rem,4.8vw,3.2rem)] leading-[1.05] font-bold whitespace-nowrap text-[#1a1c1e]">
               Camp With Ease, Scout Your Site.
             </h1>
-            <p className="mt-3 text-[clamp(0.95rem,2.2vw,1.15rem)] whitespace-nowrap text-[#5f646b]">
-              Built for U.S. trips, with best accuracy for departures in the next 5 days using near-real-time fire, air quality, weather, and bear-risk signals.
+            <p className="mt-3 text-[clamp(0.95rem,2.2vw,1.15rem)] whitespace-nowrap font-semibold text-[#4f545c]">
+              Built for U.S. trips and most reliable for near-term planning.
             </p>
           </header>
 
@@ -575,11 +581,19 @@ export default function Home() {
                   />
                 </label>
               </div>
+              <p className="text-xs font-semibold text-[#5f646b]">
+                Forecast-based scoring works for trips within 16 days and is strongest within 5-7 days from today.
+              </p>
 
               {(startDate || endDate) ? (
                 <p className="text-center text-xs text-[#6b7078] sm:text-left">
                   Trip window:{" "}
                   <span className="text-[#9aa0a8]">{formatRangeInput(startDate, endDate)}</span>
+                </p>
+              ) : null}
+              {chartData?.forecastNotice ? (
+                <p className="text-xs text-[#7b8189]">
+                  {chartData.forecastNotice} Using {formatRange(chartData.forecastWindowUsed?.startDate || startDate, chartData.forecastWindowUsed?.endDate || endDate)} for forecast-dependent metrics.
                 </p>
               ) : null}
 
