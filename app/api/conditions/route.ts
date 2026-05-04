@@ -119,7 +119,13 @@ const [weatherRes, airRes, fireRes] = await Promise.all([
 ])
 
 if (!weatherRes.ok) {
-    return NextResponse.json({ error: `Weather fetch failed (${weatherRes.status})` }, { status: 502 })
+    return NextResponse.json(
+        {
+            error:
+                'Unable to fetch weather forecast right now. Please try again, and keep trip dates within 15 days from today for best forecast coverage.',
+        },
+        { status: 502 }
+    )
 }
 const weatherData = await weatherRes.json()
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
 import {
   calculateFireRisk,
@@ -50,6 +50,16 @@ function metersToFeet(meters: number) {
 function mmToInches(mm: number) {
   return mm * 0.0393701;
 }
+
+const COMPANION_TAGS = ["Just me", "Partner", "Kids", "Elderly", "Pets"] as const;
+
+const HEALTH_TAGS = [
+  "Asthma",
+  "Allergies",
+  "Mobility issues",
+  "Heart condition",
+  "None / not applicable",
+] as const;
 
 const detailTextByMetric: Record<string, string[]> = {
   "Fire Risk": [
@@ -395,9 +405,12 @@ async function generateSafetyReportFromAPI(
 }
 
 export default function Home() {
+  const [wizardStep, setWizardStep] = useState(0);
   const [address, setAddress] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [companions, setCompanions] = useState<string[]>([]);
+  const [healthConcerns, setHealthConcerns] = useState<string[]>([]);
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -444,13 +457,27 @@ export default function Home() {
       ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1
       : 0;
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const normalizedStartDate = startDate;
-    const normalizedEndDate = endDate;
-    const querySeed = address;
-    const distanceNum = 10;
+  const toggleCompanion = (tag: string) => {
+    setCompanions((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
 
+  const toggleHealth = (tag: string) => {
+    if (tag === "None / not applicable") {
+      setHealthConcerns((prev) => (prev.includes(tag) ? [] : ["None / not applicable"]));
+      return;
+    }
+    setHealthConcerns((prev) => {
+      const withoutNone = prev.filter((t) => t !== "None / not applicable");
+      return withoutNone.includes(tag)
+        ? withoutNone.filter((t) => t !== tag)
+        : [...withoutNone, tag];
+    });
+  };
+
+  const runScoutTrip = async () => {
+    const distanceNum = 10;
     setErrorMessage(null);
     setReport(null);
     setChartData(null);
@@ -458,9 +485,9 @@ export default function Home() {
     setIsScouting(true);
     try {
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
-        querySeed,
-        normalizedStartDate,
-        normalizedEndDate,
+        address,
+        startDate,
+        endDate,
         distanceNum
       );
       setReport(nextReport);
@@ -475,6 +502,14 @@ export default function Home() {
     }
   };
 
+  const resetTripPlanner = () => {
+    setReport(null);
+    setChartData(null);
+    setErrorMessage(null);
+    setExpandedMetric({});
+    setWizardStep(0);
+  };
+
   const overall = report ? overallPill(normalizedOverallScore) : null;
   const bearDangerRating = chartData?.bearDangerRating ?? 1;
   const isBearExpanded = Boolean(expandedMetric["Bear Risk"]);
@@ -483,155 +518,350 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
       <div className="scout-main-bg relative min-h-screen">
-        <div className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-7 lg:py-14">
-          <header>
-            <div className="flex items-center gap-2">
-              <span className="text-3xl" aria-hidden>
+        <div
+          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "py-12 lg:py-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
+        >
+          <header className={report ? "" : "text-center"}>
+            <div className={`flex items-center gap-2 sm:gap-3 ${report ? "" : "justify-center"}`}>
+              <span
+                className={`leading-none ${report ? "text-3xl sm:text-4xl" : "text-5xl sm:text-6xl"}`}
+                aria-hidden
+              >
                 ⛺️
               </span>
-              <p className="font-display text-2xl font-bold text-[#1a1c1e]">Scout</p>
-            </div>
-            <h1 className="font-display mt-4 text-[clamp(1.9rem,4.8vw,3.2rem)] leading-[1.05] font-bold text-[#1a1c1e]">
-              Camp With Ease, Scout Your Site.
-            </h1>
-            <p className="mt-3 max-w-3xl text-[clamp(0.95rem,2.2vw,1.15rem)] font-semibold text-[#4f545c]">
-              Built for U.S. trips and most reliable for near-term planning.
-            </p>
-          </header>
-
-          <form
-            onSubmit={handleSubmit}
-            className="font-display mt-8 rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-lg ring-1 ring-[#f5ecde] backdrop-blur-sm sm:mt-10 sm:p-6"
-          >
-            <div className="flex flex-col gap-3">
-              <p className="text-base font-semibold text-[#4f545c]">
-                Enter campsite address to get started
-              </p>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-                <div ref={suggestionsRef} className="relative min-w-0 flex-1">
-                  <label className="relative flex min-w-0 w-full items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                    <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
-                    <input
-                      type="text"
-                      required
-                      value={address}
-                      onChange={(e) => handleAddressChange(e.target.value)}
-                      onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                      placeholder="Yosemite Valley, CA"
-                      className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
-                    />
-                  </label>
-                  {showSuggestions && (
-                    <ul className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-[#e8ddcc] bg-white shadow-lg">
-                      {suggestions.map((s) => (
-                        <li
-                          key={s}
-                          onMouseDown={() => {
-                            setAddress(s);
-                            setSuggestions([]);
-                            setShowSuggestions(false);
-                          }}
-                          className="cursor-pointer truncate px-4 py-2.5 text-sm text-[#1a1c1e] hover:bg-[#fdf6ec]"
-                        >
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="relative flex items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <CalendarIcon className="h-5 w-5 shrink-0 text-[#8b8e94]" />
-                  <span className="sr-only">Start date</span>
-                  <input
-                    type="date"
-                    required
-                    value={startDate}
-                    onChange={(e) => {
-                      const nextStart = e.target.value;
-                      if (!nextStart) {
-                        setStartDate("");
-                        return;
-                      }
-                      setStartDate(nextStart);
-                      if (endDate && endDate < nextStart) {
-                        setEndDate(nextStart);
-                      }
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
-                  />
-                </label>
-                <label className="relative flex items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <span className="sr-only">End date</span>
-                  <input
-                    type="date"
-                    required
-                    min={startDate || undefined}
-                    value={endDate}
-                    onChange={(e) => {
-                      const nextEnd = e.target.value;
-                      if (!nextEnd) {
-                        setEndDate("");
-                        return;
-                      }
-                      let clampedEnd = nextEnd;
-                      if (startDate && clampedEnd < startDate) {
-                        clampedEnd = startDate;
-                      }
-                      setEndDate(clampedEnd);
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
-                  />
-                </label>
-              </div>
-              <p className="text-xs font-semibold text-[#5f646b]">
-                Forecast-based scoring works for trips within 16 days and is strongest within 5-7 days from today.
-              </p>
-
-              {(startDate || endDate) ? (
-                <p className="text-center text-xs text-[#6b7078] sm:text-left">
-                  Trip window:{" "}
-                  <span className="text-[#9aa0a8]">{formatRangeInput(startDate, endDate)}</span>
-                </p>
-              ) : null}
-              {chartData?.forecastNotice ? (
-                <p className="text-xs text-[#7b8189]">
-                  {chartData.forecastNotice} Using {formatRange(chartData.forecastWindowUsed?.startDate || startDate, chartData.forecastWindowUsed?.endDate || endDate)} for forecast-dependent metrics.
-                </p>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={isScouting}
-                className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-bold text-white shadow-md transition sm:text-base ${
-                  isScouting
-                    ? "cursor-not-allowed bg-[#f1a64a]"
-                    : "bg-[#ea8a12] hover:brightness-110"
+              <p
+                className={`font-display tracking-tight text-[#1a1c1e] ${
+                  report
+                    ? "text-2xl font-bold sm:text-3xl"
+                    : "text-4xl font-extrabold sm:text-5xl lg:text-6xl"
                 }`}
               >
-                {isScouting ? "Scouting..." : "Scout Area"}
-              </button>
+                Scout
+              </p>
             </div>
-          </form>
+            {!report && (
+              <div
+                className="mx-auto mt-3 flex w-full max-w-lg items-center gap-2.5 px-2 sm:mt-4 sm:max-w-2xl sm:gap-3"
+                role="presentation"
+              >
+                <span
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#c0392b] opacity-90 sm:min-w-12"
+                  aria-hidden
+                />
+                <p className="font-display shrink-0 text-base font-extrabold tracking-tight text-[#1a1c1e] sm:text-lg">
+                  Camp safer, Scout first.
+                </p>
+                <span
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#c0392b] opacity-90 sm:min-w-12"
+                  aria-hidden
+                />
+              </div>
+            )}
+          </header>
+
+          {!report && (
+            <div
+              className="font-display flex flex-1 flex-col items-center justify-center px-2 pb-8 pt-6 sm:pt-10"
+              role="region"
+              aria-label="Trip planner"
+            >
+              <div className="w-full max-w-2xl space-y-10 text-center sm:space-y-12">
+                <div className="space-y-4">
+                  <p className="text-[clamp(1.45rem,5vw,2.35rem)] font-extrabold tracking-tight text-[#1a1c1e]">
+                    Welcome, camper
+                  </p>
+                  <div className="flex justify-center gap-2.5 pt-1" aria-hidden>
+                    {[0, 1, 2, 3].map((i) => (
+                      <span
+                        key={i}
+                        className={`h-2 rounded-full transition-all duration-300 ${
+                          i === wizardStep ? "w-10 bg-[#ea8a12]" : "w-2 bg-[#eadfcd]"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {wizardStep === 0 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                      Where are you headed?
+                    </p>
+                    <div ref={suggestionsRef} className="relative w-full text-left">
+                      <label className="relative flex min-w-0 w-full items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:px-6 sm:py-5">
+                        <PinIcon className="h-7 w-7 shrink-0 text-[#d97706] sm:h-8 sm:w-8" />
+                        <input
+                          type="text"
+                          autoComplete="street-address"
+                          value={address}
+                          onChange={(e) => handleAddressChange(e.target.value)}
+                          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                          placeholder="Campsite or trailhead address"
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] sm:text-xl"
+                        />
+                      </label>
+                      {showSuggestions && (
+                        <ul className="absolute left-0 right-0 top-full z-50 mt-2 max-h-52 overflow-y-auto rounded-2xl border border-[#eadfcd]/90 bg-[#fffcf9]/95 py-1.5 text-base shadow-lg backdrop-blur-md sm:text-lg">
+                          {suggestions.map((s) => (
+                            <li
+                              key={s}
+                              onMouseDown={() => {
+                                setAddress(s);
+                                setSuggestions([]);
+                                setShowSuggestions(false);
+                              }}
+                              className="cursor-pointer truncate px-5 py-3 text-[#1a1c1e] transition hover:bg-[#fff3e0]/80"
+                            >
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="flex justify-center pt-2">
+                      <button
+                        type="button"
+                        disabled={!address.trim()}
+                        onClick={() => setWizardStep(1)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:px-14 sm:py-4 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 1 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                      When are you going?
+                    </p>
+                    <div className="grid w-full gap-4 sm:grid-cols-2 sm:gap-5">
+                      <label className="flex min-h-[3.5rem] items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:min-h-[4rem] sm:px-6 sm:py-5">
+                        <CalendarIcon className="h-7 w-7 shrink-0 text-[#8b8e94] sm:h-8 sm:w-8" />
+                        <span className="sr-only">Start date</span>
+                        <input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => {
+                            const nextStart = e.target.value;
+                            if (!nextStart) {
+                              setStartDate("");
+                              return;
+                            }
+                            setStartDate(nextStart);
+                            if (endDate && endDate < nextStart) {
+                              setEndDate(nextStart);
+                            }
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none sm:text-xl"
+                        />
+                      </label>
+                      <label className="flex min-h-[3.5rem] items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:min-h-[4rem] sm:px-6 sm:py-5">
+                        <span className="sr-only">End date</span>
+                        <input
+                          type="date"
+                          min={startDate || undefined}
+                          value={endDate}
+                          onChange={(e) => {
+                            const nextEnd = e.target.value;
+                            if (!nextEnd) {
+                              setEndDate("");
+                              return;
+                            }
+                            let clampedEnd = nextEnd;
+                            if (startDate && clampedEnd < startDate) {
+                              clampedEnd = startDate;
+                            }
+                            setEndDate(clampedEnd);
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none sm:text-xl"
+                        />
+                      </label>
+                    </div>
+                    <p className="text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
+                      Forecast-based scoring works for trips within 16 days and is strongest within 5-7 days from today.
+                    </p>
+                    {(startDate || endDate) && (
+                      <p className="text-sm text-[#6b7078] sm:text-base">
+                        Trip window{" "}
+                        <span className="font-semibold text-[#4f545c]">{formatRangeInput(startDate, endDate)}</span>
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(0)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!startDate || !endDate}
+                        onClick={() => setWizardStep(2)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:px-14 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 2 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <div className="space-y-2">
+                      <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                        Who&apos;s coming with you?
+                      </p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
+                      {COMPANION_TAGS.map((tag) => {
+                        const selected = companions.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => toggleCompanion(tag)}
+                            className={`rounded-full px-6 py-3.5 text-base font-bold transition sm:px-7 sm:py-4 sm:text-lg ${
+                              selected
+                                ? "bg-[#fff3e0] text-[#b45309] ring-2 ring-[#ea8a12]/60"
+                                : "bg-[#f5ebe0]/50 text-[#5f5450] ring-1 ring-[#eadfcd]/60 hover:bg-[#f0e4d4]/70"
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(1)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(3)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] sm:px-14 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 3 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <div className="space-y-2">
+                      <p className="text-[clamp(1.35rem,4.5vw,2.25rem)] font-bold leading-snug text-[#3d4249] sm:font-extrabold">
+                        Any health considerations?
+                      </p>
+                      <p className="text-base text-[#888780] sm:text-lg">
+                        Optional — for your planning only; not sent to forecast APIs.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
+                      {HEALTH_TAGS.map((tag) => {
+                        const selected = healthConcerns.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => toggleHealth(tag)}
+                            className={`rounded-full px-6 py-3.5 text-base font-bold transition sm:px-7 sm:py-4 sm:text-lg ${
+                              selected
+                                ? "bg-[#fff3e0] text-[#b45309] ring-2 ring-[#ea8a12]/60"
+                                : "bg-[#f5ebe0]/50 text-[#5f5450] ring-1 ring-[#eadfcd]/60 hover:bg-[#f0e4d4]/70"
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(2)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isScouting}
+                        onClick={() => void runScoutTrip()}
+                        className={`rounded-full px-12 py-4 text-base font-extrabold text-white shadow-md transition active:scale-[0.98] sm:px-14 sm:text-lg ${
+                          isScouting ? "cursor-not-allowed bg-[#f1a64a]" : "bg-[#ea8a12] hover:brightness-110"
+                        }`}
+                      >
+                        {isScouting ? "Scouting…" : "Scout my trip!"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {errorMessage && (
-            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div
+              className={`rounded-xl border border-red-200/90 bg-red-50/90 px-4 py-3 text-center text-sm text-red-800 backdrop-blur-sm ${
+                report ? "mt-6" : "mx-auto mt-4 max-w-md"
+              }`}
+            >
               {errorMessage}
             </div>
           )}
 
           {report && (
             <section className="mt-10">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h2 className="font-display text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1">
+                  <h2 className="font-display break-words text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
                     {address}
                   </h2>
                   <p className="mt-1 text-sm text-[#888780]">
                     {`Forecast window ${formatRange(startDate, endDate)}`}
                   </p>
+                  {(companions.length > 0 || healthConcerns.length > 0) && (
+                    <div className="mt-3 text-sm text-[#6b7078]">
+                      {companions.length > 0 && (
+                        <p>
+                          <span className="font-semibold text-[#4f545c]">Group:</span>{" "}
+                          {companions.join(", ")}
+                        </p>
+                      )}
+                      {healthConcerns.length > 0 && (
+                        <p className="mt-1">
+                          <span className="font-semibold text-[#4f545c]">Health notes:</span>{" "}
+                          {healthConcerns.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {chartData?.forecastNotice ? (
+                    <p className="mt-2 text-xs text-[#7b8189]">
+                      {chartData.forecastNotice} Using{" "}
+                      {formatRange(
+                        chartData.forecastWindowUsed?.startDate || startDate,
+                        chartData.forecastWindowUsed?.endDate || endDate
+                      )}{" "}
+                      for forecast-dependent metrics.
+                    </p>
+                  ) : null}
                 </div>
+                <button
+                  type="button"
+                  onClick={resetTripPlanner}
+                  className="shrink-0 rounded-xl border border-[#e8ddcc] bg-white px-4 py-2.5 text-sm font-bold text-[#4f545c] transition hover:bg-[#fdf6ec]"
+                >
+                  Plan another trip
+                </button>
               </div>
 
               <div className="mt-6 space-y-5">
