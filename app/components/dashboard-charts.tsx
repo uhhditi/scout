@@ -22,10 +22,13 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
       ];
 
   const n = displayTemps.length;
-  // Inset x so edge labels don't get clipped
-  const xPad = 16;
-  const xStep = n > 1 ? (320 - xPad * 2) / (n - 1) : 0;
-  const xFor = (idx: number) => (n === 1 ? 160 : xPad + idx * xStep);
+  // Reserve room for y-axis labels and x-axis day labels.
+  const chartLeft = 36;
+  const chartRight = 306;
+  const chartTop = 12;
+  const chartBottom = 118;
+  const xStep = n > 1 ? (chartRight - chartLeft) / (n - 1) : 0;
+  const xFor = (idx: number) => (n === 1 ? (chartLeft + chartRight) / 2 : chartLeft + idx * xStep);
 
   // Dynamic y scaling based on actual temp range
   const minTemp = Math.min(...displayTemps);
@@ -33,17 +36,32 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
   const tempRange = Math.max(maxTemp - minTemp, 10);
   const yFor = (temp: number) => {
     const normalized = (temp - minTemp) / tempRange;
-    return Math.max(8, Math.min(112, 104 - normalized * 96 + 8));
+    return chartBottom - normalized * (chartBottom - chartTop);
   };
+  const yTicks = 5;
+  const yTickValues = Array.from({ length: yTicks }, (_, i) => {
+    const t = maxTemp - (i * tempRange) / (yTicks - 1);
+    return Math.round(t);
+  });
+  const yTickY = (i: number) => chartTop + (i * (chartBottom - chartTop)) / (yTicks - 1);
 
   const linePoints = displayTemps
     .map((temp, idx) => `${xFor(idx)},${yFor(temp)}`)
     .join(" ");
 
   const hasRealRisk = fireRisk !== undefined && airRisk !== undefined && bearRisk !== undefined;
-  const fr = hasRealRisk ? fireRisk! / 100 : Math.min(1, 0.48 + (chartSeed % 45) / 100);
-  const ar = hasRealRisk ? airRisk! / 100 : Math.min(1, 0.44 + ((chartSeed * 3) % 40) / 100);
-  const br = hasRealRisk ? bearRisk! / 100 : Math.min(1, 0.42 + ((chartSeed * 5) % 45) / 100);
+  const rawFr = hasRealRisk ? fireRisk! : Math.min(100, 48 + (chartSeed % 45));
+  const rawAr = hasRealRisk ? airRisk! : Math.min(100, 44 + ((chartSeed * 3) % 40));
+  const rawBr = hasRealRisk ? bearRisk! : Math.min(100, 42 + ((chartSeed * 5) % 45));
+  const rawRiskValues = [rawFr, rawAr, rawBr];
+  const minRisk = Math.min(...rawRiskValues);
+  const maxRisk = Math.max(...rawRiskValues);
+  const riskRange = Math.max(maxRisk - minRisk, 8);
+  // Expand similar ranges so shape changes are easier to see between searches.
+  const normalized = (value: number) => 0.2 + 0.8 * ((value - minRisk) / riskRange);
+  const fr = normalized(rawFr);
+  const ar = normalized(rawAr);
+  const br = normalized(rawBr);
 
   const R = 58;
   const deg = (d: number) => (d * Math.PI) / 180;
@@ -67,8 +85,16 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
                 <stop offset="100%" stopColor="#ea8a12" />
               </linearGradient>
             </defs>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <line key={i} x1="0" y1={20 + i * 24} x2="320" y2={20 + i * 24} stroke="#d1d5db" strokeWidth="1" />
+            {Array.from({ length: yTicks }).map((_, i) => (
+              <line
+                key={i}
+                x1={chartLeft}
+                y1={yTickY(i)}
+                x2={chartRight}
+                y2={yTickY(i)}
+                stroke="#d1d5db"
+                strokeWidth="1"
+              />
             ))}
             <polyline
               points={linePoints}
@@ -92,7 +118,20 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
                 fontSize="11"
                 style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
               >
-                {hasRealTemps ? `${Math.round(temp)}°` : `Day ${idx + 1}`}
+                {`Day ${idx + 1}`}
+              </text>
+            ))}
+            {yTickValues.map((temp, i) => (
+              <text
+                key={`y-${i}`}
+                x={chartLeft - 6}
+                y={yTickY(i) + 3}
+                textAnchor="end"
+                fill="#6b7078"
+                fontSize="10"
+                style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
+              >
+                {`${temp}°`}
               </text>
             ))}
           </svg>
@@ -128,11 +167,20 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
             <text x="100" y="22" textAnchor="middle" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
               Fire
             </text>
+            <text x="100" y="34" textAnchor="middle" fill="#9aa0a8" fontSize="10" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
+              {Math.round(rawFr)}
+            </text>
             <text x="168" y="152" textAnchor="start" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
               Air
             </text>
+            <text x="168" y="164" textAnchor="start" fill="#9aa0a8" fontSize="10" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
+              {Math.round(rawAr)}
+            </text>
             <text x="32" y="152" textAnchor="end" fill="#6b7078" fontSize="11" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
-              Wildlife
+              Bear
+            </text>
+            <text x="32" y="164" textAnchor="end" fill="#9aa0a8" fontSize="10" style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}>
+              {Math.round(rawBr)}
             </text>
           </svg>
         </div>
