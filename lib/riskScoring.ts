@@ -355,6 +355,72 @@ export function calculateOverallSafetyScore(
   return Math.round(weighted) / 10;
 }
 
+export interface RiskScores {
+  overall: number;
+  weather: number;
+  temperature: number;
+  wind: number;
+  precipitation: number;
+  fire: number;
+  airQuality: number;
+}
+
+export interface GroupProfile {
+  vulnerableMembers: ("elderly" | "children" | "pets")[];
+  medicalConditions: ("asthma" | "respiratory" | string)[];
+}
+
+/**
+ * Applies group sensitivity multipliers to normalized (0-10) risk scores.
+ */
+export function applyGroupMultipliers(scores: RiskScores, group: GroupProfile): RiskScores {
+  let { overall, weather, temperature, wind, precipitation, fire, airQuality } = scores;
+
+  // Vulnerability multipliers (take highest, do not stack)
+  const vulnerabilityMap: Record<string, number> = {
+    elderly: 1.2,
+    children: 1.3,
+    pets: 1.1,
+  };
+  const applicableMultipliers = group.vulnerableMembers.map(
+    (member) => vulnerabilityMap[member] ?? 1.0
+  );
+  const vulnerabilityMultiplier =
+    applicableMultipliers.length > 0 ? Math.max(...applicableMultipliers) : 1.0;
+
+  overall *= vulnerabilityMultiplier;
+  weather *= vulnerabilityMultiplier;
+  temperature *= vulnerabilityMultiplier;
+  wind *= vulnerabilityMultiplier;
+  precipitation *= vulnerabilityMultiplier;
+
+  // Medical multipliers
+  const hasRespiratoryCondition =
+    group.medicalConditions.includes("asthma") ||
+    group.medicalConditions.includes("respiratory");
+  const hasOtherMedical = group.medicalConditions.some(
+    (condition) => condition !== "asthma" && condition !== "respiratory"
+  );
+
+  if (hasRespiratoryCondition) {
+    fire *= 1.5;
+    airQuality *= 1.5;
+  }
+  if (hasOtherMedical) {
+    overall *= 1.4;
+  }
+
+  return {
+    overall: Math.min(overall, 10),
+    weather: Math.min(weather, 10),
+    temperature: Math.min(temperature, 10),
+    wind: Math.min(wind, 10),
+    precipitation: Math.min(precipitation, 10),
+    fire: Math.min(fire, 10),
+    airQuality: Math.min(airQuality, 10),
+  };
+}
+
 /**
  * Get risk level label
  */

@@ -9,6 +9,9 @@ import {
   calculateBearRisk,
   getBearDangerRating,
   calculateOverallSafetyScore,
+  applyGroupMultipliers,
+  type GroupProfile,
+  type RiskScores,
   getRiskLevel,
   getNearestFireDistanceKm,
   extractFireCoordinates,
@@ -33,6 +36,28 @@ function formatRange(startDate: string, endDate: string) {
 function formatRangeInput(startDate: string, endDate: string) {
   if (!startDate || !endDate) return "Select dates";
   return formatRange(startDate, endDate);
+}
+
+function formatReportTimestamp(iso: string) {
+  if (!iso) return "Not generated";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Not generated";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function makeReportId(address: string, startDate: string, endDate: string) {
+  const seed = `${address.trim().toLowerCase()}|${startDate}|${endDate}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return `SR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`;
 }
 
 function kmToMiles(km: number) {
@@ -215,6 +240,7 @@ type ReportResult = {
   bearDangerRating: number;
   bearRiskDetails: string[];
   airQualityUnavailable: boolean;
+  aiBriefing: string | null;
   forecastNotice?: string;
   forecastWindowUsed?: {
     startDate: string;
@@ -226,7 +252,10 @@ async function generateSafetyReportFromAPI(
   address: string,
   startDate: string,
   endDate: string,
-  distance: number
+  distance: number,
+  groupProfile: GroupProfile,
+  partySize: string,
+  userNotes: string
 ): Promise<ReportResult> {
   try {
     const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
@@ -277,8 +306,6 @@ async function generateSafetyReportFromAPI(
               : "Air quality is favorable for most groups, though checking daily updates is still recommended.",
         ];
     const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate);
-    const weatherHazardScore = weatherAlertness;
-    const weatherHazardLabel = getExtremeWeatherLabel(weatherHazardScore);
     const tripDaysCount =
       Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const weatherCodeWindow = (weatherDaily.weathercode || []).slice(0, tripDaysCount);
@@ -347,24 +374,102 @@ async function generateSafetyReportFromAPI(
       weatherAlertness,
       bearRisk
     );
-    const overallSafety = overallSafetyRaw > 10 ? overallSafetyRaw / 10 : overallSafetyRaw;
+    const maxTemp = (weatherDaily.temperature_2m_max || []).length
+      ? Math.max(...weatherDaily.temperature_2m_max)
+      : 20;
+    const temperatureRisk = maxTemp > 38 ? 10 : maxTemp > 34 ? 8 : maxTemp > 30 ? 6 : maxTemp < 0 ? 8 : 3;
+    const windRisk = Math.min(10, strongestWind / 6);
+    const precipitationRisk = Math.min(10, wettestDay / 3);
+    const baseRiskScores: RiskScores = {
+      overall: Math.max(0, 10 - overallSafetyRaw),
+      weather: weatherAlertness / 10,
+      temperature: temperatureRisk,
+      wind: windRisk,
+      precipitation: precipitationRisk,
+      fire: fireRisk / 10,
+      airQuality: airQualityRisk / 10,
+    };
+    const adjustedRiskScores = applyGroupMultipliers(baseRiskScores, groupProfile);
+    const adjustedFireRisk = adjustedRiskScores.fire * 10;
+    const adjustedAirQualityRisk = adjustedRiskScores.airQuality * 10;
+    const adjustedWeatherAlertness = adjustedRiskScores.weather * 10;
+    const overallSafety = Math.max(0, 10 - adjustedRiskScores.overall);
+    const tempsWindow = weatherDaily.temperature_2m_max || [];
+    const tempLow = tempsWindow.length ? Math.min(...tempsWindow) : 50;
+    const tempHigh = tempsWindow.length ? Math.max(...tempsWindow) : 70;
+    const precipChance =
+      precipitationWindow.length > 0
+        ? Math.round((precipitationWindow.filter((value: number) => value > 0.5).length / precipitationWindow.length) * 100)
+        : 0;
+    const fireRiskLabel: "low" | "moderate" | "high" | "extreme" =
+      adjustedFireRisk >= 75
+        ? "extreme"
+        : adjustedFireRisk >= 55
+          ? "high"
+          : adjustedFireRisk >= 30
+            ? "moderate"
+            : "low";
+    const tripDays =
+      Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24));
+
+    let aiBriefing: string | null = null;
+    try {
+      const briefRes = await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          conditions: {
+            tempLow: Math.round(tempLow),
+            tempHigh: Math.round(tempHigh),
+            windSpeed: Math.round(kmhToMph(strongestWind)),
+            precipChance,
+            aqi: Math.round(avgAqi || 0),
+            fireRiskLabel,
+          },
+          scores: {
+            overall: Number(adjustedRiskScores.overall.toFixed(1)),
+            weather: Number(adjustedRiskScores.weather.toFixed(1)),
+            temperature: Number(adjustedRiskScores.temperature.toFixed(1)),
+            wind: Number(adjustedRiskScores.wind.toFixed(1)),
+            precipitation: Number(adjustedRiskScores.precipitation.toFixed(1)),
+            fire: Number(adjustedRiskScores.fire.toFixed(1)),
+            airQuality: Number(adjustedRiskScores.airQuality.toFixed(1)),
+          },
+          group: groupProfile,
+          partySize,
+          tripDays,
+          userNotes,
+        }),
+      });
+      if (briefRes.ok) {
+        const briefData = await briefRes.json();
+        const briefingText =
+          typeof briefData?.briefing === "string" ? briefData.briefing.trim() : "";
+        const errorText =
+          typeof briefData?.error === "string" ? briefData.error.trim() : "";
+        aiBriefing = briefingText || (errorText ? `AI briefing unavailable: ${errorText}` : null);
+      }
+    } catch {
+      aiBriefing = "AI briefing unavailable: request failed.";
+    }
 
     const metrics = [
       {
         label: "Fire Risk",
-        value: 100 - fireRisk, // Invert: lower risk score = higher safety
+        value: 100 - adjustedFireRisk, // Invert: lower risk score = higher safety
         note: `Fire risk index based on hotspot detections from the last 5 days plus forecast wind (${kmhToMph(weatherDaily.windspeed_10m_max?.[0] || 0).toFixed(1)} mph) and precipitation.`,
         icon: "🔥",
       },
       {
         label: "Air Quality",
-        value: 100 - airQualityRisk,
+        value: 100 - adjustedAirQualityRisk,
         note: `Air quality index today is ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
         icon: "💨",
       },
       {
         label: "Weather Alertness",
-        value: 100 - weatherAlertness,
+        value: 100 - adjustedWeatherAlertness,
         note: "Weather hazard index is calculated from storm codes, heavy precipitation, and extreme winds.",
         icon: "⛈️",
       },
@@ -382,21 +487,22 @@ async function generateSafetyReportFromAPI(
         status: getRiskLevel(overallSafety),
         metrics,
       },
-      temps: weatherDaily.temperature_2m_max || [],
-      fireRisk,
+      temps: tempsWindow,
+      fireRisk: adjustedFireRisk,
       fireDetails,
-      airRisk: airQualityRisk,
+      airRisk: adjustedAirQualityRisk,
       airQualityRating,
       airQualityLabel,
       airQualityDetails,
-      weatherHazardScore,
-      weatherHazardLabel,
+      weatherHazardScore: adjustedWeatherAlertness,
+      weatherHazardLabel: getExtremeWeatherLabel(adjustedWeatherAlertness),
       weatherHazardDetails,
-      weatherRisk: weatherAlertness,
+      weatherRisk: adjustedWeatherAlertness,
       bearRisk,
       bearDangerRating,
       bearRiskDetails,
       airQualityUnavailable: !!airQualityUnavailable,
+      aiBriefing,
       forecastNotice,
       forecastWindowUsed,
     };
@@ -414,6 +520,7 @@ export default function Home() {
   const [companionDetails, setCompanionDetails] = useState("");
   const [healthConcerns, setHealthConcerns] = useState<string[]>([]);
   const [healthDetails, setHealthDetails] = useState("");
+  const [reportGeneratedAt, setReportGeneratedAt] = useState("");
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -480,13 +587,39 @@ export default function Home() {
     setExpandedMetric({});
     setIsScouting(true);
     try {
+      const vulnerableMembers = companions
+        .map((tag) => {
+          if (tag === "Elderly") return "elderly";
+          if (tag === "Kids") return "children";
+          if (tag === "Pets") return "pets";
+          return null;
+        })
+        .filter((member): member is "elderly" | "children" | "pets" => member !== null);
+
+      const medicalConditions = healthConcerns.map((tag) => {
+        if (tag === "Asthma") return "asthma";
+        if (tag === "Respiratory illness/condition") return "respiratory";
+        return tag.toLowerCase();
+      });
+      const partySize = companions.length > 0 ? `${companions.length + 1}+` : "not specified";
+      const userNotes = [companionDetails.trim(), healthDetails.trim()]
+        .filter(Boolean)
+        .join(" | ");
+
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
         address,
         startDate,
         endDate,
-        distanceNum
+        distanceNum,
+        {
+          vulnerableMembers,
+          medicalConditions,
+        },
+        partySize,
+        userNotes
       );
       setReport(nextReport);
+      setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
     } catch (error) {
@@ -506,7 +639,9 @@ export default function Home() {
     setWizardStep(0);
     setCompanionDetails("");
     setHealthDetails("");
+    setReportGeneratedAt("");
   };
+
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
   const bearDangerRating = chartData?.bearDangerRating ?? 1;
@@ -844,42 +979,12 @@ export default function Home() {
             <section className="mt-10">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h2 className="font-display text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
-                    Trip Safety Report
+                  <h2 className="font-display inline-block text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
+                    Your Personalized Safety Report
                   </h2>
                   <p className="mt-1 text-sm text-[#888780]">
                     {`Forecast window ${formatRange(startDate, endDate)}`}
                   </p>
-                  <div className="mt-3 space-y-1 text-sm text-[#6b7078]">
-                    <p>
-                      <span className="font-semibold text-[#4f545c]">Address:</span>{" "}
-                      <span className="break-words">{address}</span>
-                    </p>
-                    {companions.length > 0 && (
-                      <p>
-                        <span className="font-semibold text-[#4f545c]">Group:</span>{" "}
-                        {companions.join(", ")}
-                      </p>
-                    )}
-                    {companionDetails.trim() && (
-                      <p>
-                        <span className="font-semibold text-[#4f545c]">Group details:</span>{" "}
-                        <span className="break-words whitespace-pre-wrap">{companionDetails.trim()}</span>
-                      </p>
-                    )}
-                    {healthConcerns.length > 0 && (
-                      <p>
-                        <span className="font-semibold text-[#4f545c]">Health notes:</span>{" "}
-                        {healthConcerns.join(", ")}
-                      </p>
-                    )}
-                    {healthDetails.trim() && (
-                      <p>
-                        <span className="font-semibold text-[#4f545c]">Health details:</span>{" "}
-                        <span className="break-words whitespace-pre-wrap">{healthDetails.trim()}</span>
-                      </p>
-                    )}
-                  </div>
                   {chartData?.forecastNotice ? (
                     <p className="mt-2 text-xs text-[#7b8189]">
                       {chartData.forecastNotice} Using{" "}
@@ -891,73 +996,88 @@ export default function Home() {
                     </p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={resetTripPlanner}
-                  className="shrink-0 rounded-xl border border-[#e8ddcc] bg-white px-4 py-2.5 text-sm font-bold text-[#4f545c] transition hover:bg-[#fdf6ec]"
-                >
-                  Plan another trip
-                </button>
+                <div className="mt-3 flex w-full flex-col gap-3 sm:mt-0 sm:w-auto sm:flex-row sm:items-start">
+                  <button
+                    type="button"
+                    onClick={resetTripPlanner}
+                    className="h-11 shrink-0 rounded-xl bg-[#ea8a12] px-4 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:self-stretch"
+                  >
+                    Plan another trip
+                  </button>
+                </div>
               </div>
 
-              <div className="mt-6 space-y-5">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch xl:gap-4">
-                  <article className="flex min-h-[260px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-5 shadow-sm ring-1 ring-[#f7d6ab] sm:p-6 xl:w-[300px] xl:self-stretch">
-                    <div>
-                      <p className="font-display text-center text-lg font-bold text-[#1a1c1e] sm:text-left">
-                        Overall Safety Score
-                      </p>
-                      <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
-                        <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
-                          {normalizedOverallScore.toFixed(1)}
-                        </p>
-                        <span className="pb-2 text-lg text-[#888780]">/ 10</span>
-                        {overall ? (
-                          <span
-                            className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
-                          >
-                            {overall.label}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
-                        10 is very safe, 1 is dangerous.
-                      </p>
-                      <p className="mt-3 text-center text-base leading-relaxed text-[#5f646b] sm:text-left">
-                        {report.status}
-                      </p>
-                    </div>
-                    <div className="mt-6 flex items-center justify-center">
-                      <div className="relative h-28 w-28">
-                        <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
-                          <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
-                          <circle
-                            cx="56"
-                            cy="56"
-                            r="46"
-                            stroke="url(#overallGaugeGradient)"
-                            strokeWidth="10"
-                            fill="none"
-                            strokeLinecap="round"
-                            strokeDasharray={2 * Math.PI * 46}
-                            strokeDashoffset={2 * Math.PI * 46 * (1 - normalizedOverallScore / 10)}
-                          />
-                          <defs>
-                            <linearGradient id="overallGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#dc2626" />
-                              <stop offset="55%" stopColor="#ea8a12" />
-                              <stop offset="100%" stopColor="#fbbf24" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                        <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
-                          {normalizedOverallScore.toFixed(1)}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
+              <section className="mt-5">
+                <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
+                  Safety Summary
+                </h3>
+                <div className="mt-3">
+                  <p className="text-lg leading-relaxed text-black sm:text-xl">
+                    {chartData?.aiBriefing ?? "AI briefing unavailable for this trip."}
+                  </p>
+                </div>
+              </section>
 
-                  <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+              <details open className="group mt-5 rounded-2xl border border-[#eadfcd] bg-white/90 p-3.5 shadow-sm sm:p-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between">
+                  <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
+                    Safety Breakdown
+                  </h3>
+                  <span aria-hidden className="text-[#7b8189] transition-transform duration-200 group-open:rotate-180">▾</span>
+                </summary>
+                <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
+                <article className="flex min-h-[240px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-4 shadow-sm ring-1 ring-[#f7d6ab] sm:p-5 xl:w-[300px] xl:self-stretch">
+                  <div>
+                    <p className="font-display inline-block text-lg font-bold text-[#b45309]">
+                      Overall Safety Score
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
+                      <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
+                        {normalizedOverallScore.toFixed(1)}
+                      </p>
+                      <span className="pb-2 text-lg text-[#888780]">/ 10</span>
+                      {overall ? (
+                        <span
+                          className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
+                        >
+                          {overall.label}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
+                      10 is very safe, 1 is dangerous.
+                    </p>
+                  </div>
+                  <div className="mt-6 flex items-center justify-center">
+                    <div className="relative h-28 w-28">
+                      <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
+                        <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
+                        <circle
+                          cx="56"
+                          cy="56"
+                          r="46"
+                          stroke="url(#overallGaugeGradient)"
+                          strokeWidth="10"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeDasharray={2 * Math.PI * 46}
+                          strokeDashoffset={2 * Math.PI * 46 * (1 - normalizedOverallScore / 10)}
+                        />
+                        <defs>
+                          <linearGradient id="overallGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stopColor="#dc2626" />
+                            <stop offset="55%" stopColor="#ea8a12" />
+                            <stop offset="100%" stopColor="#fbbf24" />
+                          </linearGradient>
+                        </defs>
+                      </svg>
+                      <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
+                        {normalizedOverallScore.toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                </article>
+                <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
                   {report.metrics
                     .filter((metric) => ["Fire Risk", "Air Quality", "Weather Alertness"].includes(metric.label))
                     .map((metric) => {
@@ -976,7 +1096,7 @@ export default function Home() {
                     return (
                       <article
                         key={metric.label}
-                        className="flex h-full min-h-[260px] flex-col rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-sm sm:p-6"
+                        className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
@@ -1082,7 +1202,7 @@ export default function Home() {
                     );
                   })}
 
-                  <article className="flex h-full min-h-[260px] flex-col rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-sm sm:p-6">
+                  <article className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
                           <span className="mr-1">🐻</span>
@@ -1143,7 +1263,24 @@ export default function Home() {
                   </article>
                   </div>
                 </div>
-              </div>
+              </details>
+              <details open className="group mt-5 rounded-2xl border border-[#eadfcd] bg-white/90 p-3.5 shadow-sm sm:p-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between">
+                  <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
+                    Visualizations
+                  </h3>
+                  <span aria-hidden className="text-[#7b8189] transition-transform duration-200 group-open:rotate-180">▾</span>
+                </summary>
+                <div className="mt-3">
+                  <DashboardCharts
+                    chartSeed={chartSeed}
+                    temps={chartData?.temps}
+                    fireRisk={chartData?.fireRisk}
+                    airRisk={chartData?.airRisk}
+                    bearRisk={chartData?.bearRisk}
+                  />
+                </div>
+              </details>
               {(tripDays > 5 || tripDays > 10) && (
                 <p className="mt-4 text-xs text-[#8b8e94]">
                   Data coverage limits for this {tripDays}-day trip —{" "}
@@ -1153,18 +1290,6 @@ export default function Home() {
                 </p>
               )}
             </section>
-          )}
-
-          {report && (
-            <div className="mt-10 border-t border-[#e5e7eb] pt-10">
-              <DashboardCharts
-                chartSeed={chartSeed}
-                temps={chartData?.temps}
-                fireRisk={chartData?.fireRisk}
-                airRisk={chartData?.airRisk}
-                bearRisk={chartData?.bearRisk}
-              />
-            </div>
           )}
         </div>
       </div>
