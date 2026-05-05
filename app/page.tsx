@@ -51,14 +51,15 @@ function mmToInches(mm: number) {
   return mm * 0.0393701;
 }
 
-const COMPANION_TAGS = ["Just me", "Partner", "Kids", "Elderly", "Pets"] as const;
+const COMPANION_TAGS = ["Kids", "Elderly", "Pets"] as const;
 
 const HEALTH_TAGS = [
   "Asthma",
-  "Allergies",
+  "Seasonal allergies",
   "Mobility issues",
   "Heart condition",
-  "None / not applicable",
+  "Respiratory illness/condition",
+  "Other",
 ] as const;
 
 const detailTextByMetric: Record<string, string[]> = {
@@ -410,7 +411,9 @@ export default function Home() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [companions, setCompanions] = useState<string[]>([]);
+  const [companionDetails, setCompanionDetails] = useState("");
   const [healthConcerns, setHealthConcerns] = useState<string[]>([]);
+  const [healthDetails, setHealthDetails] = useState("");
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -464,16 +467,9 @@ export default function Home() {
   };
 
   const toggleHealth = (tag: string) => {
-    if (tag === "None / not applicable") {
-      setHealthConcerns((prev) => (prev.includes(tag) ? [] : ["None / not applicable"]));
-      return;
-    }
-    setHealthConcerns((prev) => {
-      const withoutNone = prev.filter((t) => t !== "None / not applicable");
-      return withoutNone.includes(tag)
-        ? withoutNone.filter((t) => t !== tag)
-        : [...withoutNone, tag];
-    });
+    setHealthConcerns((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
   };
 
   const runScoutTrip = async () => {
@@ -508,6 +504,8 @@ export default function Home() {
     setErrorMessage(null);
     setExpandedMetric({});
     setWizardStep(0);
+    setCompanionDetails("");
+    setHealthDetails("");
   };
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
@@ -545,14 +543,14 @@ export default function Home() {
                 role="presentation"
               >
                 <span
-                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#c0392b] opacity-90 sm:min-w-12"
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#ea8a12] opacity-90 sm:min-w-12"
                   aria-hidden
                 />
                 <p className="font-display shrink-0 text-base font-extrabold tracking-tight text-[#1a1c1e] sm:text-lg">
                   Camp safer, Scout first.
                 </p>
                 <span
-                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#c0392b] opacity-90 sm:min-w-12"
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#ea8a12] opacity-90 sm:min-w-12"
                   aria-hidden
                 />
               </div>
@@ -568,7 +566,7 @@ export default function Home() {
               <div className="w-full max-w-2xl space-y-10 text-center sm:space-y-12">
                 <div className="space-y-4">
                   <p className="text-[clamp(1.45rem,5vw,2.35rem)] font-extrabold tracking-tight text-[#1a1c1e]">
-                    Welcome, camper
+                    Welcome Camper!
                   </p>
                   <div className="flex justify-center gap-2.5 pt-1" aria-hidden>
                     {[0, 1, 2, 3].map((i) => (
@@ -735,6 +733,19 @@ export default function Home() {
                         );
                       })}
                     </div>
+                    <div className="mx-auto w-full max-w-2xl pt-3 text-left">
+                      <label htmlFor="companion-details" className="block text-base font-bold text-[#3d4249] sm:text-lg">
+                        Further details <span className="font-semibold text-[#888780]">(optional)</span>
+                      </label>
+                      <textarea
+                        id="companion-details"
+                        rows={3}
+                        value={companionDetails}
+                        onChange={(e) => setCompanionDetails(e.target.value)}
+                        placeholder="Ages, group size, pets…"
+                        className="mt-3 min-h-[92px] w-full resize-y rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-3 text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] focus:border-[#d97706]/60 focus:ring-4 focus:ring-[#f7d6ab]/50 sm:min-h-[100px] sm:px-6 sm:py-3.5 sm:text-xl"
+                      />
+                    </div>
                     <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
                       <button
                         type="button"
@@ -760,9 +771,7 @@ export default function Home() {
                       <p className="text-[clamp(1.35rem,4.5vw,2.25rem)] font-bold leading-snug text-[#3d4249] sm:font-extrabold">
                         Any health considerations?
                       </p>
-                      <p className="text-base text-[#888780] sm:text-lg">
-                        Optional — for your planning only; not sent to forecast APIs.
-                      </p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
                     </div>
                     <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
                       {HEALTH_TAGS.map((tag) => {
@@ -782,6 +791,19 @@ export default function Home() {
                           </button>
                         );
                       })}
+                    </div>
+                    <div className="mx-auto w-full max-w-2xl pt-3 text-left">
+                      <label htmlFor="health-details" className="block text-base font-bold text-[#3d4249] sm:text-lg">
+                        Further details <span className="font-semibold text-[#888780]">(optional)</span>
+                      </label>
+                      <textarea
+                        id="health-details"
+                        rows={3}
+                        value={healthDetails}
+                        onChange={(e) => setHealthDetails(e.target.value)}
+                        placeholder="Medications, allergies, other notes…"
+                        className="mt-3 min-h-[92px] w-full resize-y rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-3 text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] focus:border-[#d97706]/60 focus:ring-4 focus:ring-[#f7d6ab]/50 sm:min-h-[100px] sm:px-6 sm:py-3.5 sm:text-xl"
+                      />
                     </div>
                     <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
                       <button
@@ -822,28 +844,42 @@ export default function Home() {
             <section className="mt-10">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h2 className="font-display break-words text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
-                    {address}
+                  <h2 className="font-display text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
+                    Trip Safety Report
                   </h2>
                   <p className="mt-1 text-sm text-[#888780]">
                     {`Forecast window ${formatRange(startDate, endDate)}`}
                   </p>
-                  {(companions.length > 0 || healthConcerns.length > 0) && (
-                    <div className="mt-3 text-sm text-[#6b7078]">
-                      {companions.length > 0 && (
-                        <p>
-                          <span className="font-semibold text-[#4f545c]">Group:</span>{" "}
-                          {companions.join(", ")}
-                        </p>
-                      )}
-                      {healthConcerns.length > 0 && (
-                        <p className="mt-1">
-                          <span className="font-semibold text-[#4f545c]">Health notes:</span>{" "}
-                          {healthConcerns.join(", ")}
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <div className="mt-3 space-y-1 text-sm text-[#6b7078]">
+                    <p>
+                      <span className="font-semibold text-[#4f545c]">Address:</span>{" "}
+                      <span className="break-words">{address}</span>
+                    </p>
+                    {companions.length > 0 && (
+                      <p>
+                        <span className="font-semibold text-[#4f545c]">Group:</span>{" "}
+                        {companions.join(", ")}
+                      </p>
+                    )}
+                    {companionDetails.trim() && (
+                      <p>
+                        <span className="font-semibold text-[#4f545c]">Group details:</span>{" "}
+                        <span className="break-words whitespace-pre-wrap">{companionDetails.trim()}</span>
+                      </p>
+                    )}
+                    {healthConcerns.length > 0 && (
+                      <p>
+                        <span className="font-semibold text-[#4f545c]">Health notes:</span>{" "}
+                        {healthConcerns.join(", ")}
+                      </p>
+                    )}
+                    {healthDetails.trim() && (
+                      <p>
+                        <span className="font-semibold text-[#4f545c]">Health details:</span>{" "}
+                        <span className="break-words whitespace-pre-wrap">{healthDetails.trim()}</span>
+                      </p>
+                    )}
+                  </div>
                   {chartData?.forecastNotice ? (
                     <p className="mt-2 text-xs text-[#7b8189]">
                       {chartData.forecastNotice} Using{" "}
