@@ -80,21 +80,54 @@ function mmToInches(mm: number) {
 
 const COMPANION_TAGS = ["Just me", "Partner", "Kids", "Elderly", "Pets"] as const;
 
-function buildProfile(companions: string[], healthConcerns: string[]): TripProfile {
+function parseDetailsForExtras(
+  companionDetails: string,
+  healthDetails: string
+): { extraConditions: TripProfile["healthConditions"]; detectedPets: boolean } {
+  const text = (companionDetails + " " + healthDetails).toLowerCase();
+  const extraConditions: TripProfile["healthConditions"] = [];
+
+  const detectedPets = /\b(dog|dogs|cat|cats|puppy|puppies|kitten|kittens|pup|pups|pooch|pet|pets|canine|feline|labrador|retriever|golden|poodle|beagle|husky|shepherd|bulldog|dachshund|chihuahua|yorkie|tabby|rabbit|bunny|hamster|bird|parrot)\b/.test(text);
+
+  if (/\b(asthma|asthmatic|inhaler|albuterol|wheezing|wheeze|bronchitis|bronchial|respiratory|copd|emphysema|shortness of breath|chest tightness|nebulizer)\b/.test(text))
+    extraConditions.push("asthma");
+  if (/\b(allergies|allergic|allergen|allergy|epipen|epinephrine|anaphylaxis|anaphylactic|hives|bee sting|nut allergy|peanut|shellfish|latex|hay fever|pollen|seasonal)\b/.test(text))
+    extraConditions.push("allergies");
+  if (/\b(heart|cardiac|pacemaker|hypertension|high blood pressure|angina|arrhythmia|afib|atrial fibrillation|bypass|stent|blood pressure|cholesterol|cardiovascular|nitroglycerin)\b/.test(text))
+    extraConditions.push("heart_condition");
+  if (/\b(knee|knees|joint|joints|wheelchair|walker|crutches|crutch|arthritis|arthritic|mobility|cane|brace|bad hip|bad back|sciatica|fibromyalgia|chronic pain|limited mobility|torn meniscus|acl)\b/.test(text))
+    extraConditions.push("knee_joints");
+
+  return { extraConditions, detectedPets };
+}
+
+function buildProfile(
+  companions: string[],
+  healthConcerns: string[],
+  companionDetails = "",
+  healthDetails = ""
+): TripProfile {
   let groupType: TripProfile["groupType"] = "solo";
   if (companions.includes("Kids")) groupType = "family_kids";
   else if (companions.includes("Partner")) groupType = "couple";
   else if (companions.length > 0 && !companions.includes("Just me")) groupType = "group";
+
   const healthMap: Record<string, TripProfile["healthConditions"][number]> = {
     "Asthma": "asthma",
     "Allergies": "allergies",
+    "Seasonal allergies": "allergies",
     "Mobility issues": "knee_joints",
     "Heart condition": "heart_condition",
+    "Respiratory illness/condition": "asthma",
   };
-  const healthConditions = healthConcerns
-    .filter((h) => h !== "None / not applicable" && h in healthMap)
+  const selectedConditions = healthConcerns
+    .filter((h) => h in healthMap)
     .map((h) => healthMap[h]);
-  const hasPets = companions.includes("Pets");
+
+  const { extraConditions, detectedPets } = parseDetailsForExtras(companionDetails, healthDetails);
+  const healthConditions = [...new Set([...selectedConditions, ...extraConditions])];
+
+  const hasPets = companions.includes("Pets") || detectedPets;
   return { hikingLevel: "intermediate", groupType, healthConditions, hasPets };
 }
 
@@ -552,9 +585,16 @@ export default function Home() {
       : 0;
 
   const toggleCompanion = (tag: string) => {
-    setCompanions((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    );
+    if (tag === "Just me") {
+      setCompanions((prev) => (prev.includes("Just me") ? [] : ["Just me"]));
+      return;
+    }
+    setCompanions((prev) => {
+      const withoutJustMe = prev.filter((t) => t !== "Just me");
+      return withoutJustMe.includes(tag)
+        ? withoutJustMe.filter((t) => t !== tag)
+        : [...withoutJustMe, tag];
+    });
   };
 
   const toggleHealth = (tag: string) => {
@@ -608,7 +648,7 @@ export default function Home() {
       setChartData(meta);
       setExpandedMetric({});
       const tripType = deriveTripType(startDate, endDate);
-      const profile = buildProfile(companions, healthConcerns);
+      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
       setChecklist(recommendGear(profile, tripType, meta.weatherCtx));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
@@ -1002,12 +1042,12 @@ export default function Home() {
               </nav>
 
               {reportView === "packing" ? (
-                <section className="mt-5 rounded-2xl border border-dashed border-[#e2c9a4] bg-[#fffdf9] p-5 text-[#5f646b]">
-                  <h3 className="font-display text-xl font-bold text-[#1a1c1e] sm:text-2xl">Packing List</h3>
-                  <p className="mt-2 text-base">
-                    Packing list view coming soon. This section will include recommended gear based on your risk profile.
-                  </p>
-                </section>
+                <div className="mt-5">
+                  {checklist && checklist.length > 0
+                    ? <GearChecklist sections={checklist} />
+                    : <p className="mt-8 text-center text-sm text-[#888780]">No packing list generated yet.</p>
+                  }
+                </div>
               ) : (
                 <>
                   <section className="mt-6">
@@ -1285,21 +1325,6 @@ export default function Home() {
             </section>
           )}
 
-          {report && (
-            <div className="mt-10 border-t border-[#e5e7eb] pt-10">
-              <DashboardCharts
-                chartSeed={chartSeed}
-                temps={chartData?.temps}
-                fireRisk={chartData?.fireRisk}
-                airRisk={chartData?.airRisk}
-                bearRisk={chartData?.bearRisk}
-              />
-            </div>
-          )}
-
-          {checklist && checklist.length > 0 && (
-            <GearChecklist sections={checklist} />
-          )}
         </div>
       </div>
     </div>
