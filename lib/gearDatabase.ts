@@ -14,8 +14,9 @@ export type GearItem = {
     | "lighting"
     | "hygiene";
   priority: "essential" | "recommended" | "optional";
-  // profile tags: hiking level, trip type, health conditions, group type
-  // weather tags: rain, high_fire, cold, high_altitude, thunderstorm
+  // User-selectable tags: trip type (day_hike, overnight, multi_day), group type (solo, couple, group, family_kids),
+  // health conditions (asthma, allergies, heart_condition, knee_joints),
+  // weather-derived (rain, high_fire, cold, high_altitude, thunderstorm, high_bear, poor_air)
   tags: string[];
   storeLinks: { name: string; url: string }[];
 };
@@ -57,35 +58,19 @@ export const gearDatabase: GearItem[] = [
 
   // SLEEP
   {
-    id: "sleeping_bag",
-    name: "Sleeping Bag",
+    id: "sleep_kit",
+    name: "Sleeping Bag & Sleeping Pad (check bag temp rating against forecast lows)",
     category: "sleep",
     priority: "essential",
     tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=sleeping+bag" }],
-  },
-  {
-    id: "sleeping_bag_cold",
-    name: "Cold-Weather Sleeping Bag (0°F or lower)",
-    category: "sleep",
-    priority: "essential",
-    tags: ["cold", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=cold+weather+sleeping+bag" }],
-  },
-  {
-    id: "sleeping_pad",
-    name: "Sleeping Pad",
-    category: "sleep",
-    priority: "essential",
-    tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=sleeping+pad" }],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=sleeping+bag+sleeping+pad" }],
   },
   {
     id: "pillow",
     name: "Camping Pillow",
     category: "sleep",
     priority: "optional",
-    tags: ["overnight", "multi_day", "comfort"],
+    tags: ["overnight", "multi_day"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=camping+pillow" }],
   },
 
@@ -127,7 +112,7 @@ export const gearDatabase: GearItem[] = [
     name: "Waterproof Hiking Boots",
     category: "clothing",
     priority: "essential",
-    tags: ["day_hike", "overnight", "multi_day", "advanced", "intermediate", "rain"],
+    tags: ["day_hike", "overnight", "multi_day", "rain"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=waterproof+hiking+boots" }],
   },
   {
@@ -135,7 +120,7 @@ export const gearDatabase: GearItem[] = [
     name: "Trail Running Shoes",
     category: "clothing",
     priority: "recommended",
-    tags: ["day_hike", "beginner", "intermediate"],
+    tags: ["day_hike"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=trail+running+shoes" }],
   },
   {
@@ -175,52 +160,28 @@ export const gearDatabase: GearItem[] = [
     name: "Gaiters",
     category: "clothing",
     priority: "recommended",
-    tags: ["rain", "advanced", "multi_day", "high_altitude"],
+    tags: ["rain", "multi_day", "high_altitude"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=gaiters+hiking" }],
   },
 
-  // NAVIGATION
+  // NAVIGATION — listed as alternatives so the user picks whichever they carry
   {
-    id: "map",
-    name: "Topographic Map",
+    id: "nav_tools",
+    name: "GPS Device or Topographic Map & Compass",
     category: "navigation",
     priority: "essential",
     tags: ["day_hike", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=topographic+map" }],
-  },
-  {
-    id: "compass",
-    name: "Compass",
-    category: "navigation",
-    priority: "essential",
-    tags: ["day_hike", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=hiking+compass" }],
-  },
-  {
-    id: "gps",
-    name: "GPS Device / Satellite Communicator",
-    category: "navigation",
-    priority: "recommended",
-    tags: ["advanced", "multi_day", "high_altitude"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=gps+device+hiking" }],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=gps+topographic+map+compass" }],
   },
 
-  // FOOD
+  // FOOD — stove and cookpot merged since neither is useful without the other
   {
-    id: "stove",
-    name: "Backpacking Stove + Fuel",
+    id: "cook_kit",
+    name: "Camp Stove, Fuel & Cookpot",
     category: "food",
     priority: "essential",
     tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=backpacking+stove" }],
-  },
-  {
-    id: "cookpot",
-    name: "Cookpot + Utensils",
-    category: "food",
-    priority: "essential",
-    tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=camping+cookpot" }],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=backpacking+stove+cookpot" }],
   },
   {
     id: "bear_canister",
@@ -238,38 +199,22 @@ export const gearDatabase: GearItem[] = [
     tags: ["day_hike", "overnight", "multi_day"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=trail+food+backpacking" }],
   },
-  {
-    id: "food_diabetic",
-    name: "Diabetic-Safe Snacks (low glycemic index)",
-    category: "food",
-    priority: "essential",
-    tags: ["diabetes"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=trail+snacks" }],
-  },
 
-  // WATER
+  // WATER — filter and bottles merged since you need both together
   {
-    id: "water_filter",
-    name: "Water Filter / Purifier",
+    id: "water_system",
+    name: "Water Filter + Hydration Bottles/Bladder (2–4L)",
     category: "water",
     priority: "essential",
     tags: ["day_hike", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=water+filter+backpacking" }],
-  },
-  {
-    id: "water_bottles",
-    name: "Water Bottles or Hydration Bladder (2–4L)",
-    category: "water",
-    priority: "essential",
-    tags: ["day_hike", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=hydration+bladder" }],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=water+filter+hydration+bladder" }],
   },
   {
     id: "electrolytes",
     name: "Electrolyte Packets",
     category: "water",
     priority: "recommended",
-    tags: ["high_altitude", "advanced", "heart_condition", "diabetes"],
+    tags: ["high_altitude", "heart_condition"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=electrolyte+packets+hiking" }],
   },
 
@@ -310,17 +255,26 @@ export const gearDatabase: GearItem[] = [
     id: "bear_spray",
     name: "Bear Spray",
     category: "safety",
-    priority: "essential",
-    tags: ["overnight", "multi_day"],
+    priority: "recommended",
+    tags: ["high_bear"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=bear+spray" }],
   },
   {
     id: "n95_mask",
     name: "N95 Masks (smoke/ash protection)",
     category: "safety",
-    priority: "essential",
-    tags: ["high_fire", "asthma"],
+    priority: "recommended",
+    tags: ["high_fire", "asthma", "poor_air"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=n95+mask+outdoor" }],
+  },
+  // Sunscreen and bug repellent merged — both applied before heading out, always packed together
+  {
+    id: "sun_bug_kit",
+    name: "Sunscreen SPF 50+ & Insect Repellent",
+    category: "safety",
+    priority: "essential",
+    tags: ["day_hike", "overnight", "multi_day", "high_altitude"],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=sunscreen+insect+repellent" }],
   },
   {
     id: "lightning_protocol",
@@ -331,27 +285,11 @@ export const gearDatabase: GearItem[] = [
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=weather+radio+camping" }],
   },
   {
-    id: "sunscreen",
-    name: "Sunscreen SPF 50+",
-    category: "safety",
-    priority: "essential",
-    tags: ["day_hike", "overnight", "multi_day", "high_altitude"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=sunscreen+spf+50" }],
-  },
-  {
-    id: "bug_repellent",
-    name: "Insect Repellent",
-    category: "safety",
-    priority: "essential",
-    tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=insect+repellent+camping" }],
-  },
-  {
     id: "satellite_messenger",
     name: "Satellite Messenger (e.g. Garmin inReach)",
     category: "safety",
     priority: "recommended",
-    tags: ["advanced", "solo", "multi_day", "high_altitude"],
+    tags: ["solo", "multi_day", "high_altitude"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=satellite+messenger" }],
   },
 
@@ -372,53 +310,23 @@ export const gearDatabase: GearItem[] = [
     tags: ["high_altitude", "heart_condition"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=altitude+sickness" }],
   },
+  // EpiPen and antihistamines merged — same condition, always packed together
   {
-    id: "epipen",
-    name: "EpiPen (if prescribed)",
+    id: "allergy_kit",
+    name: "Allergy Kit (EpiPen if prescribed + antihistamines)",
     category: "health",
     priority: "essential",
     tags: ["allergies"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=first+aid+kit" }],
   },
+  // Heart meds and nitroglycerin merged — same condition, same kit
   {
-    id: "antihistamine",
-    name: "Antihistamines",
-    category: "health",
-    priority: "essential",
-    tags: ["allergies"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=first+aid+kit" }],
-  },
-  {
-    id: "glucose_monitor",
-    name: "Glucose Monitor + Extra Supplies",
-    category: "health",
-    priority: "essential",
-    tags: ["diabetes"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=first+aid+kit" }],
-  },
-  {
-    id: "heart_meds",
-    name: "Heart Medications (extra supply, labeled)",
+    id: "heart_kit",
+    name: "Heart Medications & Nitroglycerin (extra supply, labeled)",
     category: "health",
     priority: "essential",
     tags: ["heart_condition"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=first+aid+kit" }],
-  },
-  {
-    id: "nitroglycerin",
-    name: "Nitroglycerin Spray (if prescribed)",
-    category: "health",
-    priority: "essential",
-    tags: ["heart_condition"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=first+aid+kit" }],
-  },
-  {
-    id: "prenatal_vitamins",
-    name: "Prenatal Vitamins + Extra Water",
-    category: "health",
-    priority: "essential",
-    tags: ["pregnancy"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=camping+water+bottle" }],
   },
 
   // MOBILITY
@@ -427,7 +335,7 @@ export const gearDatabase: GearItem[] = [
     name: "Trekking Poles",
     category: "mobility",
     priority: "essential",
-    tags: ["knee_joints", "advanced", "multi_day", "high_altitude"],
+    tags: ["knee_joints", "multi_day", "high_altitude"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=trekking+poles" }],
   },
   {
@@ -443,7 +351,7 @@ export const gearDatabase: GearItem[] = [
     name: "Lightweight Backpack (under 2 lbs)",
     category: "mobility",
     priority: "recommended",
-    tags: ["heart_condition", "pregnancy", "beginner"],
+    tags: ["heart_condition"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=lightweight+backpack" }],
   },
   {
@@ -453,6 +361,40 @@ export const gearDatabase: GearItem[] = [
     priority: "recommended",
     tags: ["family_kids"],
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=child+carrier+backpack" }],
+  },
+
+  // PET ESSENTIALS
+  {
+    id: "pet_leash",
+    name: "Dog Leash & Harness",
+    category: "safety",
+    priority: "essential",
+    tags: ["pets"],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=dog+harness+hiking" }],
+  },
+  {
+    id: "pet_first_aid",
+    name: "Pet First Aid Kit",
+    category: "health",
+    priority: "essential",
+    tags: ["pets"],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=pet+first+aid+kit" }],
+  },
+  {
+    id: "pet_water",
+    name: "Collapsible Water Bowl + Extra Water for Pet",
+    category: "water",
+    priority: "essential",
+    tags: ["pets"],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=collapsible+dog+bowl" }],
+  },
+  {
+    id: "pet_food",
+    name: "Pet Food & Treats",
+    category: "food",
+    priority: "essential",
+    tags: ["pets"],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=dog+trail+treats" }],
   },
 
   // LIGHTING
@@ -473,22 +415,14 @@ export const gearDatabase: GearItem[] = [
     storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=camping+lantern" }],
   },
 
-  // HYGIENE
+  // HYGIENE — waste kit and hand sanitizer merged since they're always packed as a hygiene bundle
   {
-    id: "waste_kit",
-    name: "Leave No Trace Waste Kit (trowel + bags)",
-    category: "hygiene",
-    priority: "essential",
-    tags: ["overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=leave+no+trace+kit" }],
-  },
-  {
-    id: "hand_sanitizer",
-    name: "Hand Sanitizer",
+    id: "hygiene_kit",
+    name: "Hand Sanitizer + LNT Waste Kit (trowel, bags)",
     category: "hygiene",
     priority: "essential",
     tags: ["day_hike", "overnight", "multi_day"],
-    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=hand+sanitizer" }],
+    storeLinks: [{ name: "REI", url: "https://www.rei.com/search?q=leave+no+trace+kit" }],
   },
   {
     id: "biodegradable_soap",

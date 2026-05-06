@@ -4,6 +4,7 @@ export type TripProfile = {
   hikingLevel: "beginner" | "intermediate" | "advanced";
   groupType: "solo" | "couple" | "group" | "family_kids";
   healthConditions: Array<"asthma" | "heart_condition" | "knee_joints" | "diabetes" | "allergies" | "pregnancy">;
+  hasPets: boolean;
 };
 
 export type WeatherContext = {
@@ -47,10 +48,10 @@ export function recommendGear(
   weather: WeatherContext
 ): ChecklistSection[] {
   const activeTags = new Set<string>([
-    profile.hikingLevel,
     profile.groupType,
     tripType,
     ...profile.healthConditions,
+    ...(profile.hasPets ? ["pets"] : []),
     ...(weather.hasRain ? ["rain"] : []),
     ...(weather.highFireRisk ? ["high_fire"] : []),
     ...(weather.isCold ? ["cold"] : []),
@@ -58,6 +59,13 @@ export function recommendGear(
     ...(weather.hasThunderstorm ? ["thunderstorm"] : []),
     ...(weather.highBearRisk ? ["high_bear"] : []),
     ...(weather.poorAirQuality ? ["poor_air"] : []),
+  ]);
+
+  // When a risk score crosses its threshold, elevate these items from recommended → essential
+  const elevateToEssential = new Set<string>([
+    ...(weather.hasThunderstorm ? ["lightning_protocol"] : []),
+    ...(weather.highBearRisk ? ["bear_spray"] : []),
+    ...(weather.highFireRisk || weather.poorAirQuality ? ["n95_mask"] : []),
   ]);
 
   const selected: ChecklistItem[] = [];
@@ -69,9 +77,10 @@ export function recommendGear(
     }
 
     const matchCount = item.tags.filter((t) => activeTags.has(t)).length;
+    const effectivePriority = elevateToEssential.has(item.id) ? "essential" : item.priority;
 
-    if (item.priority === "essential" && matchCount > 0) {
-      selected.push(item);
+    if (effectivePriority === "essential" && matchCount > 0) {
+      selected.push({ ...item, priority: effectivePriority });
     } else if (item.priority === "recommended" && matchCount >= 1) {
       selected.push(item);
     } else if (item.priority === "optional" && matchCount >= 2) {

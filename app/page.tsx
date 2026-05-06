@@ -69,7 +69,8 @@ function buildProfile(companions: string[], healthConcerns: string[]): TripProfi
   const healthConditions = healthConcerns
     .filter((h) => h !== "None / not applicable" && h in healthMap)
     .map((h) => healthMap[h]);
-  return { hikingLevel: "intermediate", groupType, healthConditions };
+  const hasPets = companions.includes("Pets");
+  return { hikingLevel: "intermediate", groupType, healthConditions, hasPets };
 }
 
 const HEALTH_TAGS = [
@@ -401,7 +402,7 @@ async function generateSafetyReportFromAPI(
       hasRain:
         weatherCodeWindow.some((c: number) => rainCodes.has(c)) ||
         precipitationWindow.some((p: number) => p > 1),
-      highFireRisk: fireRisk > 50,
+      highFireRisk: fireRisk >= 30,
       isCold: (weatherDaily.temperature_2m_max || []).some((t: number) => t < 55),
       isHighAltitude: (location?.elevation ?? 0) > 2500,
       hasThunderstorm: weatherCodeWindow.some((c: number) => thunderCodes.has(c)),
