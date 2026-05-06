@@ -17,6 +17,8 @@ import {
   extractFireCoordinates,
 } from "@/lib/riskScoring";
 import { DashboardCharts } from "@/app/components/dashboard-charts";
+import { GearChecklist } from "@/app/components/gear-checklist";
+import { recommendGear, deriveTripType, type TripProfile, type WeatherContext, type ChecklistSection } from "@/lib/gearRecommender";
 
 function formatRange(startDate: string, endDate: string) {
   if (!startDate || !endDate) return "Select dates";
@@ -76,7 +78,25 @@ function mmToInches(mm: number) {
   return mm * 0.0393701;
 }
 
-const COMPANION_TAGS = ["Kids", "Elderly", "Pets"] as const;
+const COMPANION_TAGS = ["Just me", "Partner", "Kids", "Elderly", "Pets"] as const;
+
+function buildProfile(companions: string[], healthConcerns: string[]): TripProfile {
+  let groupType: TripProfile["groupType"] = "solo";
+  if (companions.includes("Kids")) groupType = "family_kids";
+  else if (companions.includes("Partner")) groupType = "couple";
+  else if (companions.length > 0 && !companions.includes("Just me")) groupType = "group";
+  const healthMap: Record<string, TripProfile["healthConditions"][number]> = {
+    "Asthma": "asthma",
+    "Allergies": "allergies",
+    "Mobility issues": "knee_joints",
+    "Heart condition": "heart_condition",
+  };
+  const healthConditions = healthConcerns
+    .filter((h) => h !== "None / not applicable" && h in healthMap)
+    .map((h) => healthMap[h]);
+  const hasPets = companions.includes("Pets");
+  return { hikingLevel: "intermediate", groupType, healthConditions, hasPets };
+}
 
 const HEALTH_TAGS = [
   "Asthma",
@@ -246,6 +266,7 @@ type ReportResult = {
     startDate: string;
     endDate: string;
   };
+  weatherCtx: WeatherContext;
 };
 
 async function generateSafetyReportFromAPI(
@@ -427,6 +448,20 @@ async function generateSafetyReportFromAPI(
       },
     ];
 
+    const rainCodes = new Set([51, 53, 55, 61, 63, 65, 67, 80, 81, 82]);
+    const thunderCodes = new Set([95, 96, 99]);
+    const weatherCtx: WeatherContext = {
+      hasRain:
+        weatherCodeWindow.some((c: number) => rainCodes.has(c)) ||
+        precipitationWindow.some((p: number) => p > 1),
+      highFireRisk: fireRisk >= 30,
+      isCold: (weatherDaily.temperature_2m_max || []).some((t: number) => t < 55),
+      isHighAltitude: (location?.elevation ?? 0) > 2500,
+      hasThunderstorm: weatherCodeWindow.some((c: number) => thunderCodes.has(c)),
+      highBearRisk: bearDangerRating >= 3,
+      poorAirQuality: !airQualityUnavailable && airQualityRisk > 40,
+    };
+
     return {
       report: {
         overallScore: overallSafety,
@@ -451,6 +486,7 @@ async function generateSafetyReportFromAPI(
       aiBriefing,
       forecastNotice,
       forecastWindowUsed,
+      weatherCtx,
     };
   } catch (error) {
     throw error;
@@ -473,6 +509,7 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
   const [isScouting, setIsScouting] = useState(false);
+  const [checklist, setChecklist] = useState<ChecklistSection[] | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -531,6 +568,7 @@ export default function Home() {
     setErrorMessage(null);
     setReport(null);
     setChartData(null);
+    setChecklist(null);
     setExpandedMetric({});
     setIsScouting(true);
     try {
@@ -569,7 +607,9 @@ export default function Home() {
       setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
-      setReportView("main");
+      const tripType = deriveTripType(startDate, endDate);
+      const profile = buildProfile(companions, healthConcerns);
+      setChecklist(recommendGear(profile, tripType, meta.weatherCtx));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
       setReport(null);
@@ -582,6 +622,7 @@ export default function Home() {
   const resetTripPlanner = () => {
     setReport(null);
     setChartData(null);
+    setChecklist(null);
     setErrorMessage(null);
     setExpandedMetric({});
     setWizardStep(0);
@@ -1242,6 +1283,22 @@ export default function Home() {
                 </p>
               )}
             </section>
+          )}
+
+          {report && (
+            <div className="mt-10 border-t border-[#e5e7eb] pt-10">
+              <DashboardCharts
+                chartSeed={chartSeed}
+                temps={chartData?.temps}
+                fireRisk={chartData?.fireRisk}
+                airRisk={chartData?.airRisk}
+                bearRisk={chartData?.bearRisk}
+              />
+            </div>
+          )}
+
+          {checklist && checklist.length > 0 && (
+            <GearChecklist sections={checklist} />
           )}
         </div>
       </div>
