@@ -6,9 +6,23 @@ type DashboardChartsProps = {
   fireRisk?: number;
   airRisk?: number;
   bearRisk?: number;
+  startDate?: string;
 };
 
-export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk }: DashboardChartsProps) {
+function addDaysUTC(date: Date, days: number) {
+  const d = new Date(date);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+export function DashboardCharts({
+  chartSeed,
+  temps,
+  fireRisk,
+  airRisk,
+  bearRisk,
+  startDate,
+}: DashboardChartsProps) {
   const hasRealTemps = temps && temps.length > 0;
   const displayTemps = hasRealTemps
     ? temps.slice(0, 7)
@@ -48,6 +62,17 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
   const linePoints = displayTemps
     .map((temp, idx) => `${xFor(idx)},${yFor(temp)}`)
     .join(" ");
+
+  const dateFormatter = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+
+  const startDateUTC =
+    startDate && typeof startDate === "string" && startDate.trim()
+      ? new Date(`${startDate.trim()}T12:00:00Z`)
+      : null;
 
   const hasRealRisk = fireRisk !== undefined && airRisk !== undefined && bearRisk !== undefined;
   const rawFr = hasRealRisk ? fireRisk! : Math.min(100, 48 + (chartSeed % 45));
@@ -118,7 +143,9 @@ export function DashboardCharts({ chartSeed, temps, fireRisk, airRisk, bearRisk 
                 fontSize="11"
                 style={{ fontFamily: "Georgia, 'Times New Roman', Times, serif" }}
               >
-                {`Day ${idx + 1}`}
+                {startDateUTC && !Number.isNaN(startDateUTC.getTime())
+                  ? dateFormatter.format(addDaysUTC(startDateUTC, idx))
+                  : `Day ${idx + 1}`}
               </text>
             ))}
             {yTickValues.map((temp, i) => (

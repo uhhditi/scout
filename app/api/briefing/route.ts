@@ -32,38 +32,41 @@ function buildPrompt(payload: BriefingRequest): string {
   const { address, conditions, scores, group, partySize, tripDays, userNotes } = payload;
   const { tempLow, tempHigh, windSpeed, precipChance, aqi, fireRiskLabel } = conditions;
   return `
-You are an enthusiastic camping safety advisor. Based on the data below, write a concise safety briefing in exactly 3 sentences. Each sentence must be complete. Be specific and actionable, do not repeat the scores back.
+You are briefing an experienced camper who is about to leave for their trip. 
+They know camping. They do not need explanations of why risks are dangerous.
 
-LOCATION:
-- Address: ${address}
+Write exactly 3 sentences. Each must be a concrete camping decision or action 
+they can act on right now — what to pack, when to hike, where to set up camp, 
+what to skip. Ordered from most to least urgent.
 
-CONDITIONS (what's actually happening):
+Rules:
+- Use exact numbers from the data (temps, wind speed, AQI, precip %)
+- Weave medical conditions and vulnerable members into camping advice naturally
+  (e.g. "bring an extra inhaler" not "asthma sufferers face elevated risk")
+- Never explain why something is dangerous — only what to do about it
+- Every sentence must be specific to this location and this group
+
+BAD: "With a broken neck in the group, avoid strenuous activity that could 
+lead to re-injury."
+GOOD: "Skip the ridge trail and set up base camp low — stick to flat ground 
+given the neck injury in your group."
+
+BAD: "High winds of 35mph pose a significant tent stability risk."  
+GOOD: "Guy out your tent with extra stakes tonight — 35mph gusts expected."
+
+LOCATION: ${address}
+CONDITIONS:
 - Temperature: low ${tempLow}°F, high ${tempHigh}°F
-- Wind: ${windSpeed} mph
+- Wind: ${windSpeed} mph  
 - Precipitation: ${precipChance}% chance
 - Air Quality Index: ${aqi}
-- Fire Risk: ${fireRiskLabel} (low/moderate/high/extreme)
+- Fire Risk: ${fireRiskLabel}
 
-RISK SCORES (1-10, higher = more dangerous):
-- Overall: ${scores.overall}
-- Weather: ${scores.weather}
-- Temperature: ${scores.temperature}
-- Wind: ${scores.wind}
-- Precipitation: ${scores.precipitation}
-- Fire: ${scores.fire}
-- Air Quality: ${scores.airQuality}
-
-GROUP PROFILE:
+GROUP:
 - Vulnerable members: ${group.vulnerableMembers.join(", ") || "none"}
 - Medical conditions: ${group.medicalConditions.join(", ") || "none"}
-- Party size: ${partySize}
-- Trip duration: ${tripDays} nights
-- Additional notes: ${userNotes || "none"}
-
-Use specific numbers from the conditions above (exact temperatures, wind speed, AQI etc).
-Format each sentence as a direct actionable instruction starting with a verb.
-Mention the location by name where relevant.
-Do NOT give generic advice — every sentence must have advice and reference something specific from the data above.
+- Party size: ${partySize}, ${tripDays} nights
+- Notes: ${userNotes || "none"}
 `;
 }
 

@@ -397,68 +397,14 @@ async function generateSafetyReportFromAPI(
     const tempsWindow = weatherDaily.temperature_2m_max || [];
     const tempLow = tempsWindow.length ? Math.min(...tempsWindow) : 50;
     const tempHigh = tempsWindow.length ? Math.max(...tempsWindow) : 70;
-    const precipChance =
-      precipitationWindow.length > 0
-        ? Math.round((precipitationWindow.filter((value: number) => value > 0.5).length / precipitationWindow.length) * 100)
-        : 0;
-    const fireRiskLabel: "low" | "moderate" | "high" | "extreme" =
-      adjustedFireRisk >= 75
-        ? "extreme"
-        : adjustedFireRisk >= 55
-          ? "high"
-          : adjustedFireRisk >= 30
-            ? "moderate"
-            : "low";
-    const tripDays =
-      Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24));
-
-    let aiBriefing: string | null = null;
-    try {
-      const briefRes = await fetch("/api/briefing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          address,
-          conditions: {
-            tempLow: Math.round(tempLow),
-            tempHigh: Math.round(tempHigh),
-            windSpeed: Math.round(kmhToMph(strongestWind)),
-            precipChance,
-            aqi: Math.round(avgAqi || 0),
-            fireRiskLabel,
-          },
-          scores: {
-            overall: Number(adjustedRiskScores.overall.toFixed(1)),
-            weather: Number(adjustedRiskScores.weather.toFixed(1)),
-            temperature: Number(adjustedRiskScores.temperature.toFixed(1)),
-            wind: Number(adjustedRiskScores.wind.toFixed(1)),
-            precipitation: Number(adjustedRiskScores.precipitation.toFixed(1)),
-            fire: Number(adjustedRiskScores.fire.toFixed(1)),
-            airQuality: Number(adjustedRiskScores.airQuality.toFixed(1)),
-          },
-          group: groupProfile,
-          partySize,
-          tripDays,
-          userNotes,
-        }),
-      });
-      if (briefRes.ok) {
-        const briefData = await briefRes.json();
-        const briefingText =
-          typeof briefData?.briefing === "string" ? briefData.briefing.trim() : "";
-        const errorText =
-          typeof briefData?.error === "string" ? briefData.error.trim() : "";
-        aiBriefing = briefingText || (errorText ? `AI briefing unavailable: ${errorText}` : null);
-      }
-    } catch {
-      aiBriefing = "AI briefing unavailable: request failed.";
-    }
+    const aiBriefing =
+      "This is placeholder summary text for now. AI-generated trip guidance is temporarily disabled while we finish wiring the final briefing flow.";
 
     const metrics = [
       {
         label: "Fire Risk",
         value: 100 - adjustedFireRisk, // Invert: lower risk score = higher safety
-        note: `Fire risk index based on hotspot detections from the last 5 days plus forecast wind (${kmhToMph(weatherDaily.windspeed_10m_max?.[0] || 0).toFixed(1)} mph) and precipitation.`,
+        note: "Fire risk index based on hotspot detections from the last 5 days plus forecast conditions.",
         icon: "🔥",
       },
       {
@@ -521,6 +467,7 @@ export default function Home() {
   const [healthConcerns, setHealthConcerns] = useState<string[]>([]);
   const [healthDetails, setHealthDetails] = useState("");
   const [reportGeneratedAt, setReportGeneratedAt] = useState("");
+  const [reportView, setReportView] = useState<"main" | "packing">("main");
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -622,6 +569,7 @@ export default function Home() {
       setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
+      setReportView("main");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
       setReport(null);
@@ -640,6 +588,7 @@ export default function Home() {
     setCompanionDetails("");
     setHealthDetails("");
     setReportGeneratedAt("");
+    setReportView("main");
   };
 
 
@@ -654,25 +603,15 @@ export default function Home() {
         <div
           className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "py-12 lg:py-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
         >
-          <header className={report ? "" : "text-center"}>
-            <div className={`flex items-center gap-2 sm:gap-3 ${report ? "" : "justify-center"}`}>
-              <span
-                className={`leading-none ${report ? "text-3xl sm:text-4xl" : "text-5xl sm:text-6xl"}`}
-                aria-hidden
-              >
-                ⛺️
-              </span>
-              <p
-                className={`font-display tracking-tight text-[#1a1c1e] ${
-                  report
-                    ? "text-2xl font-bold sm:text-3xl"
-                    : "text-4xl font-extrabold sm:text-5xl lg:text-6xl"
-                }`}
-              >
-                Scout
-              </p>
-            </div>
-            {!report && (
+          {!report && (
+            <header className="text-center">
+              <div className="flex items-center gap-2 sm:gap-3 justify-center">
+                <p
+                  className={`font-display tracking-tight text-[#1a1c1e] text-4xl font-extrabold sm:text-5xl lg:text-6xl`}
+                >
+                  Scout
+                </p>
+              </div>
               <div
                 className="mx-auto mt-3 flex w-full max-w-lg items-center gap-2.5 px-2 sm:mt-4 sm:max-w-2xl sm:gap-3"
                 role="presentation"
@@ -689,8 +628,8 @@ export default function Home() {
                   aria-hidden
                 />
               </div>
-            )}
-          </header>
+            </header>
+          )}
 
           {!report && (
             <div
@@ -976,56 +915,65 @@ export default function Home() {
           )}
 
           {report && (
-            <section className="mt-10">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <h2 className="font-display inline-block text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
-                    Your Personalized Safety Report
-                  </h2>
-                  <p className="mt-1 text-sm text-[#888780]">
-                    {`Forecast window ${formatRange(startDate, endDate)}`}
-                  </p>
-                  {chartData?.forecastNotice ? (
-                    <p className="mt-2 text-xs text-[#7b8189]">
-                      {chartData.forecastNotice} Using{" "}
-                      {formatRange(
-                        chartData.forecastWindowUsed?.startDate || startDate,
-                        chartData.forecastWindowUsed?.endDate || endDate
-                      )}{" "}
-                      for forecast-dependent metrics.
-                    </p>
-                  ) : null}
+            <section className="mt-0 pt-16">
+              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 py-5 text-[#f5f0e8] sm:px-6 lg:px-8">
+                <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center justify-start gap-2">
+                    <span className="text-2xl sm:text-3xl" aria-hidden>
+                      ⛺️
+                    </span>
+                    <span className="font-display text-2xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
+                      Scout
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-5 sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setReportView("main")}
+                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                        reportView === "main"
+                          ? "border-[#E8600A] text-[#f5f0e8]"
+                          : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
+                      }`}
+                    >
+                      Safety Breakdown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportView("packing")}
+                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                        reportView === "packing"
+                          ? "border-[#E8600A] text-[#f5f0e8]"
+                          : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
+                      }`}
+                    >
+                      Packing List
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetTripPlanner}
+                      className="rounded-[20px] bg-[#E8600A] px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-110"
+                    >
+                      Plan another trip
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-3 flex w-full flex-col gap-3 sm:mt-0 sm:w-auto sm:flex-row sm:items-start">
-                  <button
-                    type="button"
-                    onClick={resetTripPlanner}
-                    className="h-11 shrink-0 rounded-xl bg-[#ea8a12] px-4 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:self-stretch"
-                  >
-                    Plan another trip
-                  </button>
-                </div>
-              </div>
+              </nav>
 
-              <section className="mt-5">
-                <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
-                  Safety Summary
-                </h3>
-                <div className="mt-3">
-                  <p className="text-lg leading-relaxed text-black sm:text-xl">
-                    {chartData?.aiBriefing ?? "AI briefing unavailable for this trip."}
+              {reportView === "packing" ? (
+                <section className="mt-5 rounded-2xl border border-dashed border-[#e2c9a4] bg-[#fffdf9] p-5 text-[#5f646b]">
+                  <h3 className="font-display text-xl font-bold text-[#1a1c1e] sm:text-2xl">Packing List</h3>
+                  <p className="mt-2 text-base">
+                    Packing list view coming soon. This section will include recommended gear based on your risk profile.
                   </p>
-                </div>
-              </section>
-
-              <details open className="group mt-5 rounded-2xl border border-[#eadfcd] bg-white/90 p-3.5 shadow-sm sm:p-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between">
-                  <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
-                    Safety Breakdown
-                  </h3>
-                  <span aria-hidden className="text-[#7b8189] transition-transform duration-200 group-open:rotate-180">▾</span>
-                </summary>
-                <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
+                </section>
+              ) : (
+                <>
+                  <section className="mt-6">
+                    <h3 className="font-display border-b-2 border-[#ea8a12] pb-2 text-2xl font-extrabold tracking-tight text-[#1a1c1e] sm:text-3xl">
+                      Safety Breakdown
+                    </h3>
+                    <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
                 <article className="flex min-h-[240px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-4 shadow-sm ring-1 ring-[#f7d6ab] sm:p-5 xl:w-[300px] xl:self-stretch">
                   <div>
                     <p className="font-display inline-block text-lg font-bold text-[#b45309]">
@@ -1046,6 +994,9 @@ export default function Home() {
                     </div>
                     <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
                       10 is very safe, 1 is dangerous.
+                    </p>
+                    <p className="mt-3 text-base leading-relaxed text-black sm:text-lg">
+                      {chartData?.aiBriefing ?? "AI briefing unavailable for this trip."}
                     </p>
                   </div>
                   <div className="mt-6 flex items-center justify-center">
@@ -1244,7 +1195,7 @@ export default function Home() {
                               ["Bear Risk"]: !previous["Bear Risk"],
                             }))
                           }
-                          className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                        className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
                           aria-expanded={isBearExpanded}
                           aria-label="Toggle Bear Risk details"
                         >
@@ -1263,24 +1214,25 @@ export default function Home() {
                   </article>
                   </div>
                 </div>
-              </details>
-              <details open className="group mt-5 rounded-2xl border border-[#eadfcd] bg-white/90 p-3.5 shadow-sm sm:p-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between">
-                  <h3 className="font-display inline-block border-b-2 border-[#ea8a12] pb-1 text-xl font-bold text-[#1a1c1e] sm:text-2xl">
-                    Visualizations
-                  </h3>
-                  <span aria-hidden className="text-[#7b8189] transition-transform duration-200 group-open:rotate-180">▾</span>
-                </summary>
-                <div className="mt-3">
-                  <DashboardCharts
-                    chartSeed={chartSeed}
-                    temps={chartData?.temps}
-                    fireRisk={chartData?.fireRisk}
-                    airRisk={chartData?.airRisk}
-                    bearRisk={chartData?.bearRisk}
-                  />
-                </div>
-              </details>
+                  </section>
+
+                  <section className="mt-8">
+                    <h3 className="font-display border-b-2 border-[#ea8a12] pb-2 text-2xl font-extrabold tracking-tight text-[#1a1c1e] sm:text-3xl">
+                      Visualizations
+                    </h3>
+                    <div className="mt-3">
+                      <DashboardCharts
+                        chartSeed={chartSeed}
+                        temps={chartData?.temps}
+                        fireRisk={chartData?.fireRisk}
+                        airRisk={chartData?.airRisk}
+                        bearRisk={chartData?.bearRisk}
+                        startDate={startDate}
+                      />
+                    </div>
+                  </section>
+                </>
+              )}
               {(tripDays > 5 || tripDays > 10) && (
                 <p className="mt-4 text-xs text-[#8b8e94]">
                   Data coverage limits for this {tripDays}-day trip —{" "}
