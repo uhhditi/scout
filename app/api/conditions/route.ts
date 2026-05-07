@@ -75,7 +75,7 @@ const forecastDateClamped =
 // Fetch weather
 const weatherUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&daily=weathercode,precipitation_sum,windspeed_10m_max,temperature_2m_max` +
+    `&daily=weathercode,precipitation_sum,precipitation_probability_max,windspeed_10m_max,temperature_2m_max` +
     `&temperature_unit=fahrenheit&timezone=auto&start_date=${formattedStart}&end_date=${formattedEnd}`
 const airQualityUrl =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +

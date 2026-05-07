@@ -451,8 +451,73 @@ async function generateSafetyReportFromAPI(
     const tempsWindow = weatherDaily.temperature_2m_max || [];
     const tempLow = tempsWindow.length ? Math.min(...tempsWindow) : 50;
     const tempHigh = tempsWindow.length ? Math.max(...tempsWindow) : 70;
-    const aiBriefing =
-      "This is placeholder summary text for now. AI-generated trip guidance is temporarily disabled while we finish wiring the final briefing flow.";
+
+    let aiBriefing: string | null = null;
+    try {
+      const precipProbWindow = (weatherDaily.precipitation_probability_max || []).slice(0, tripDaysCount);
+      const precipChance =
+        precipProbWindow.length > 0
+          ? Math.round(Math.max(...precipProbWindow))
+          : wettestDay > 15
+            ? 65
+            : wettestDay > 5
+              ? 35
+              : wettestDay > 1
+                ? 18
+                : 8;
+
+      const fireRiskLabel =
+        adjustedFireRisk >= 65 ? "extreme" : adjustedFireRisk >= 40 ? "high" : adjustedFireRisk >= 20 ? "moderate" : "low";
+
+      const round1 = (n: number) => Math.round(n * 10) / 10;
+      const briefingTripNights = Math.max(0, tripDaysCount - 1);
+
+      const briefingNotes = [
+        userNotes.trim(),
+        airQualityUnavailable ? "Forecast APIs did not return AQI values for these dates." : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      const briefingRes = await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          conditions: {
+            tempLow: Math.round(tempLow),
+            tempHigh: Math.round(tempHigh),
+            windSpeed: round1(kmhToMph(strongestWind)),
+            precipChance,
+            aqi: airQualityUnavailable ? null : Math.round(avgAqi),
+            fireRiskLabel,
+          },
+          scores: {
+            overall: round1(adjustedRiskScores.overall),
+            weather: round1(adjustedRiskScores.weather),
+            temperature: round1(adjustedRiskScores.temperature),
+            wind: round1(adjustedRiskScores.wind),
+            precipitation: round1(adjustedRiskScores.precipitation),
+            fire: round1(adjustedRiskScores.fire),
+            airQuality: round1(adjustedRiskScores.airQuality),
+          },
+          group: {
+            vulnerableMembers: groupProfile.vulnerableMembers,
+            medicalConditions: groupProfile.medicalConditions,
+          },
+          partySize,
+          tripDays: briefingTripNights,
+          userNotes: briefingNotes,
+        }),
+      });
+
+      const briefingJson = await briefingRes.json().catch(() => ({}));
+      aiBriefing = typeof briefingJson?.briefing === "string" && briefingJson.briefing.trim().length > 0
+        ? briefingJson.briefing.trim()
+        : null;
+    } catch {
+      aiBriefing = null;
+    }
 
     const metrics = [
       {

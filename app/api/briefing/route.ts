@@ -7,7 +7,7 @@ type BriefingRequest = {
     tempHigh: number;
     windSpeed: number;
     precipChance: number;
-    aqi: number;
+    aqi: number | null;
     fireRiskLabel: "low" | "moderate" | "high" | "extreme";
   };
   scores: {
@@ -29,13 +29,13 @@ type BriefingRequest = {
 };
 
 function buildPrompt(payload: BriefingRequest): string {
-  const { address, conditions, scores, group, partySize, tripDays, userNotes } = payload;
+  const { address, conditions, group, partySize, tripDays, userNotes } = payload;
   const { tempLow, tempHigh, windSpeed, precipChance, aqi, fireRiskLabel } = conditions;
   return `
 You are briefing an experienced camper who is about to leave for their trip. 
 They know camping. They do not need explanations of why risks are dangerous.
 
-Write exactly 3 sentences. Each must be a concrete camping decision or action 
+Write exactly 2 sentences. Each must be a concrete camping decision or action 
 they can act on right now — what to pack, when to hike, where to set up camp, 
 what to skip. Ordered from most to least urgent.
 
@@ -59,7 +59,7 @@ CONDITIONS:
 - Temperature: low ${tempLow}°F, high ${tempHigh}°F
 - Wind: ${windSpeed} mph  
 - Precipitation: ${precipChance}% chance
-- Air Quality Index: ${aqi}
+- Air Quality Index: ${aqi == null ? "unavailable from forecast APIs for this horizon" : aqi}
 - Fire Risk: ${fireRiskLabel}
 
 GROUP:
