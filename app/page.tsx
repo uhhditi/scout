@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
 import {
   calculateFireRisk,
@@ -9,11 +9,16 @@ import {
   calculateBearRisk,
   getBearDangerRating,
   calculateOverallSafetyScore,
+  applyGroupMultipliers,
+  type GroupProfile,
+  type RiskScores,
   getRiskLevel,
   getNearestFireDistanceKm,
   extractFireCoordinates,
 } from "@/lib/riskScoring";
 import { DashboardCharts } from "@/app/components/dashboard-charts";
+import { GearChecklist } from "@/app/components/gear-checklist";
+import { recommendGear, deriveTripType, type TripProfile, type WeatherContext, type ChecklistSection } from "@/lib/gearRecommender";
 
 function formatRange(startDate: string, endDate: string) {
   if (!startDate || !endDate) return "Select dates";
@@ -35,6 +40,28 @@ function formatRangeInput(startDate: string, endDate: string) {
   return formatRange(startDate, endDate);
 }
 
+function formatReportTimestamp(iso: string) {
+  if (!iso) return "Not generated";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Not generated";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function makeReportId(address: string, startDate: string, endDate: string) {
+  const seed = `${address.trim().toLowerCase()}|${startDate}|${endDate}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return `SR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`;
+}
+
 function kmToMiles(km: number) {
   return km * 0.621371;
 }
@@ -50,6 +77,68 @@ function metersToFeet(meters: number) {
 function mmToInches(mm: number) {
   return mm * 0.0393701;
 }
+
+const COMPANION_TAGS = ["Just me", "Partner", "Kids", "Elderly", "Pets"] as const;
+
+function parseDetailsForExtras(
+  companionDetails: string,
+  healthDetails: string
+): { extraConditions: TripProfile["healthConditions"]; detectedPets: boolean } {
+  const text = (companionDetails + " " + healthDetails).toLowerCase();
+  const extraConditions: TripProfile["healthConditions"] = [];
+
+  const detectedPets = /\b(dog|dogs|cat|cats|puppy|puppies|kitten|kittens|pup|pups|pooch|pet|pets|canine|feline|labrador|retriever|golden|poodle|beagle|husky|shepherd|bulldog|dachshund|chihuahua|yorkie|tabby|rabbit|bunny|hamster|bird|parrot)\b/.test(text);
+
+  if (/\b(asthma|asthmatic|inhaler|albuterol|wheezing|wheeze|bronchitis|bronchial|respiratory|copd|emphysema|shortness of breath|chest tightness|nebulizer)\b/.test(text))
+    extraConditions.push("asthma");
+  if (/\b(allergies|allergic|allergen|allergy|epipen|epinephrine|anaphylaxis|anaphylactic|hives|bee sting|nut allergy|peanut|shellfish|latex|hay fever|pollen|seasonal)\b/.test(text))
+    extraConditions.push("allergies");
+  if (/\b(heart|cardiac|pacemaker|hypertension|high blood pressure|angina|arrhythmia|afib|atrial fibrillation|bypass|stent|blood pressure|cholesterol|cardiovascular|nitroglycerin)\b/.test(text))
+    extraConditions.push("heart_condition");
+  if (/\b(knee|knees|joint|joints|wheelchair|walker|crutches|crutch|arthritis|arthritic|mobility|cane|brace|bad hip|bad back|sciatica|fibromyalgia|chronic pain|limited mobility|torn meniscus|acl)\b/.test(text))
+    extraConditions.push("knee_joints");
+
+  return { extraConditions, detectedPets };
+}
+
+function buildProfile(
+  companions: string[],
+  healthConcerns: string[],
+  companionDetails = "",
+  healthDetails = ""
+): TripProfile {
+  let groupType: TripProfile["groupType"] = "solo";
+  if (companions.includes("Kids")) groupType = "family_kids";
+  else if (companions.includes("Partner")) groupType = "couple";
+  else if (companions.length > 0 && !companions.includes("Just me")) groupType = "group";
+
+  const healthMap: Record<string, TripProfile["healthConditions"][number]> = {
+    "Asthma": "asthma",
+    "Allergies": "allergies",
+    "Seasonal allergies": "allergies",
+    "Mobility issues": "knee_joints",
+    "Heart condition": "heart_condition",
+    "Respiratory illness/condition": "asthma",
+  };
+  const selectedConditions = healthConcerns
+    .filter((h) => h in healthMap)
+    .map((h) => healthMap[h]);
+
+  const { extraConditions, detectedPets } = parseDetailsForExtras(companionDetails, healthDetails);
+  const healthConditions = [...new Set([...selectedConditions, ...extraConditions])];
+
+  const hasPets = companions.includes("Pets") || detectedPets;
+  return { hikingLevel: "intermediate", groupType, healthConditions, hasPets };
+}
+
+const HEALTH_TAGS = [
+  "Asthma",
+  "Seasonal allergies",
+  "Mobility issues",
+  "Heart condition",
+  "Respiratory illness/condition",
+  "Other",
+] as const;
 
 const detailTextByMetric: Record<string, string[]> = {
   "Fire Risk": [
@@ -209,13 +298,15 @@ type ReportResult = {
     startDate: string;
     endDate: string;
   };
+  weatherCtx: WeatherContext;
 };
 
 async function generateSafetyReportFromAPI(
   address: string,
   startDate: string,
   endDate: string,
-  distance: number
+  distance: number,
+  groupProfile: GroupProfile
 ): Promise<ReportResult> {
   try {
     const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
@@ -266,8 +357,6 @@ async function generateSafetyReportFromAPI(
               : "Air quality is favorable for most groups, though checking daily updates is still recommended.",
         ];
     const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate);
-    const weatherHazardScore = weatherAlertness;
-    const weatherHazardLabel = getExtremeWeatherLabel(weatherHazardScore);
     const tripDaysCount =
       Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const weatherCodeWindow = (weatherDaily.weathercode || []).slice(0, tripDaysCount);
@@ -336,24 +425,43 @@ async function generateSafetyReportFromAPI(
       weatherAlertness,
       bearRisk
     );
-    const overallSafety = overallSafetyRaw > 10 ? overallSafetyRaw / 10 : overallSafetyRaw;
-
+    const maxTemp = (weatherDaily.temperature_2m_max || []).length
+      ? Math.max(...weatherDaily.temperature_2m_max)
+      : 20;
+    const temperatureRisk = maxTemp > 38 ? 10 : maxTemp > 34 ? 8 : maxTemp > 30 ? 6 : maxTemp < 0 ? 8 : 3;
+    const windRisk = Math.min(10, strongestWind / 6);
+    const precipitationRisk = Math.min(10, wettestDay / 3);
+    const baseRiskScores: RiskScores = {
+      overall: Math.max(0, 10 - overallSafetyRaw),
+      weather: weatherAlertness / 10,
+      temperature: temperatureRisk,
+      wind: windRisk,
+      precipitation: precipitationRisk,
+      fire: fireRisk / 10,
+      airQuality: airQualityRisk / 10,
+    };
+    const adjustedRiskScores = applyGroupMultipliers(baseRiskScores, groupProfile);
+    const adjustedFireRisk = adjustedRiskScores.fire * 10;
+    const adjustedAirQualityRisk = adjustedRiskScores.airQuality * 10;
+    const adjustedWeatherAlertness = adjustedRiskScores.weather * 10;
+    const overallSafety = Math.max(0, 10 - adjustedRiskScores.overall);
+    const tempsWindow = weatherDaily.temperature_2m_max || [];
     const metrics = [
       {
         label: "Fire Risk",
-        value: 100 - fireRisk, // Invert: lower risk score = higher safety
-        note: `Fire risk index based on hotspot detections from the last 5 days plus forecast wind (${kmhToMph(weatherDaily.windspeed_10m_max?.[0] || 0).toFixed(1)} mph) and precipitation.`,
+        value: 100 - adjustedFireRisk, // Invert: lower risk score = higher safety
+        note: "Fire risk index based on hotspot detections from the last 5 days plus forecast conditions.",
         icon: "🔥",
       },
       {
         label: "Air Quality",
-        value: 100 - airQualityRisk,
+        value: 100 - adjustedAirQualityRisk,
         note: `Air quality index today is ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
         icon: "💨",
       },
       {
         label: "Weather Alertness",
-        value: 100 - weatherAlertness,
+        value: 100 - adjustedWeatherAlertness,
         note: "Weather hazard index is calculated from storm codes, heavy precipitation, and extreme winds.",
         icon: "⛈️",
       },
@@ -365,29 +473,44 @@ async function generateSafetyReportFromAPI(
       },
     ];
 
+    const rainCodes = new Set([51, 53, 55, 61, 63, 65, 67, 80, 81, 82]);
+    const thunderCodes = new Set([95, 96, 99]);
+    const weatherCtx: WeatherContext = {
+      hasRain:
+        weatherCodeWindow.some((c: number) => rainCodes.has(c)) ||
+        precipitationWindow.some((p: number) => p > 1),
+      highFireRisk: fireRisk >= 30,
+      isCold: (weatherDaily.temperature_2m_max || []).some((t: number) => t < 55),
+      isHighAltitude: (location?.elevation ?? 0) > 2500,
+      hasThunderstorm: weatherCodeWindow.some((c: number) => thunderCodes.has(c)),
+      highBearRisk: bearDangerRating >= 3,
+      poorAirQuality: !airQualityUnavailable && airQualityRisk > 40,
+    };
+
     return {
       report: {
         overallScore: overallSafety,
         status: getRiskLevel(overallSafety),
         metrics,
       },
-      temps: weatherDaily.temperature_2m_max || [],
-      fireRisk,
+      temps: tempsWindow,
+      fireRisk: adjustedFireRisk,
       fireDetails,
-      airRisk: airQualityRisk,
+      airRisk: adjustedAirQualityRisk,
       airQualityRating,
       airQualityLabel,
       airQualityDetails,
-      weatherHazardScore,
-      weatherHazardLabel,
+      weatherHazardScore: adjustedWeatherAlertness,
+      weatherHazardLabel: getExtremeWeatherLabel(adjustedWeatherAlertness),
       weatherHazardDetails,
-      weatherRisk: weatherAlertness,
+      weatherRisk: adjustedWeatherAlertness,
       bearRisk,
       bearDangerRating,
       bearRiskDetails,
       airQualityUnavailable: !!airQualityUnavailable,
       forecastNotice,
       forecastWindowUsed,
+      weatherCtx,
     };
   } catch (error) {
     throw error;
@@ -395,14 +518,22 @@ async function generateSafetyReportFromAPI(
 }
 
 export default function Home() {
+  const [wizardStep, setWizardStep] = useState(0);
   const [address, setAddress] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [companions, setCompanions] = useState<string[]>([]);
+  const [companionDetails, setCompanionDetails] = useState("");
+  const [healthConcerns, setHealthConcerns] = useState<string[]>([]);
+  const [healthDetails, setHealthDetails] = useState("");
+  const [reportGeneratedAt, setReportGeneratedAt] = useState("");
+  const [reportView, setReportView] = useState<"main" | "packing">("main");
   const [report, setReport] = useState<SafetyReport | null>(null);
   const [chartData, setChartData] = useState<Omit<ReportResult, "report"> | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [expandedMetric, setExpandedMetric] = useState<Record<string, boolean>>({});
   const [isScouting, setIsScouting] = useState(false);
+  const [checklist, setChecklist] = useState<ChecklistSection[] | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -444,28 +575,66 @@ export default function Home() {
       ? Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1
       : 0;
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const normalizedStartDate = startDate;
-    const normalizedEndDate = endDate;
-    const querySeed = address;
-    const distanceNum = 10;
+  const toggleCompanion = (tag: string) => {
+    if (tag === "Just me") {
+      setCompanions((prev) => (prev.includes("Just me") ? [] : ["Just me"]));
+      return;
+    }
+    setCompanions((prev) => {
+      const withoutJustMe = prev.filter((t) => t !== "Just me");
+      return withoutJustMe.includes(tag)
+        ? withoutJustMe.filter((t) => t !== tag)
+        : [...withoutJustMe, tag];
+    });
+  };
 
+  const toggleHealth = (tag: string) => {
+    setHealthConcerns((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    );
+  };
+
+  const runScoutTrip = async () => {
+    const distanceNum = 10;
     setErrorMessage(null);
     setReport(null);
     setChartData(null);
+    setChecklist(null);
     setExpandedMetric({});
     setIsScouting(true);
     try {
+      const vulnerableMembers = companions
+        .map((tag) => {
+          if (tag === "Elderly") return "elderly";
+          if (tag === "Kids") return "children";
+          if (tag === "Pets") return "pets";
+          return null;
+        })
+        .filter((member): member is "elderly" | "children" | "pets" => member !== null);
+
+      const medicalConditions = healthConcerns.map((tag) => {
+        if (tag === "Asthma") return "asthma";
+        if (tag === "Respiratory illness/condition") return "respiratory";
+        return tag.toLowerCase();
+      });
+
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
-        querySeed,
-        normalizedStartDate,
-        normalizedEndDate,
-        distanceNum
+        address,
+        startDate,
+        endDate,
+        distanceNum,
+        {
+          vulnerableMembers,
+          medicalConditions,
+        }
       );
       setReport(nextReport);
+      setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
+      const tripType = deriveTripType(startDate, endDate);
+      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
+      setChecklist(recommendGear(profile, tripType, meta.weatherCtx));
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
       setReport(null);
@@ -475,6 +644,20 @@ export default function Home() {
     }
   };
 
+  const resetTripPlanner = () => {
+    setReport(null);
+    setChartData(null);
+    setChecklist(null);
+    setErrorMessage(null);
+    setExpandedMetric({});
+    setWizardStep(0);
+    setCompanionDetails("");
+    setHealthDetails("");
+    setReportGeneratedAt("");
+    setReportView("main");
+  };
+
+
   const overall = report ? overallPill(normalizedOverallScore) : null;
   const bearDangerRating = chartData?.bearDangerRating ?? 1;
   const isBearExpanded = Boolean(expandedMetric["Bear Risk"]);
@@ -483,215 +666,435 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
       <div className="scout-main-bg relative min-h-screen">
-        <div className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-7 lg:py-14">
-          <header>
-            <div className="flex items-center gap-2">
-              <span className="text-3xl" aria-hidden>
-                ⛺️
-              </span>
-              <p className="font-display text-2xl font-bold text-[#1a1c1e]">Scout</p>
-            </div>
-            <h1 className="font-display mt-4 text-[clamp(1.9rem,4.8vw,3.2rem)] leading-[1.05] font-bold text-[#1a1c1e]">
-              Camp With Ease, Scout Your Site.
-            </h1>
-            <p className="mt-3 max-w-3xl text-[clamp(0.95rem,2.2vw,1.15rem)] font-semibold text-[#4f545c]">
-              Built for U.S. trips and most reliable for near-term planning.
-            </p>
-          </header>
-
-          <form
-            onSubmit={handleSubmit}
-            className="font-display mt-8 rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-lg ring-1 ring-[#f5ecde] backdrop-blur-sm sm:mt-10 sm:p-6"
-          >
-            <div className="flex flex-col gap-3">
-              <p className="text-base font-semibold text-[#4f545c]">
-                Enter campsite address to get started
-              </p>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-                <div ref={suggestionsRef} className="relative min-w-0 flex-1">
-                  <label className="relative flex min-w-0 w-full items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                    <PinIcon className="h-5 w-5 shrink-0 text-[#d97706]" />
-                    <input
-                      type="text"
-                      required
-                      value={address}
-                      onChange={(e) => handleAddressChange(e.target.value)}
-                      onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                      placeholder="Yosemite Valley, CA"
-                      className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none placeholder:text-[#7b8189] sm:text-lg"
-                    />
-                  </label>
-                  {showSuggestions && (
-                    <ul className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-[#e8ddcc] bg-white shadow-lg">
-                      {suggestions.map((s) => (
-                        <li
-                          key={s}
-                          onMouseDown={() => {
-                            setAddress(s);
-                            setSuggestions([]);
-                            setShowSuggestions(false);
-                          }}
-                          className="cursor-pointer truncate px-4 py-2.5 text-sm text-[#1a1c1e] hover:bg-[#fdf6ec]"
-                        >
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="relative flex items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <CalendarIcon className="h-5 w-5 shrink-0 text-[#8b8e94]" />
-                  <span className="sr-only">Start date</span>
-                  <input
-                    type="date"
-                    required
-                    value={startDate}
-                    onChange={(e) => {
-                      const nextStart = e.target.value;
-                      if (!nextStart) {
-                        setStartDate("");
-                        return;
-                      }
-                      setStartDate(nextStart);
-                      if (endDate && endDate < nextStart) {
-                        setEndDate(nextStart);
-                      }
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
-                  />
-                </label>
-                <label className="relative flex items-center gap-3 rounded-xl border border-[#e8ddcc] bg-white px-4 py-3 sm:px-5">
-                  <span className="sr-only">End date</span>
-                  <input
-                    type="date"
-                    required
-                    min={startDate || undefined}
-                    value={endDate}
-                    onChange={(e) => {
-                      const nextEnd = e.target.value;
-                      if (!nextEnd) {
-                        setEndDate("");
-                        return;
-                      }
-                      let clampedEnd = nextEnd;
-                      if (startDate && clampedEnd < startDate) {
-                        clampedEnd = startDate;
-                      }
-                      setEndDate(clampedEnd);
-                    }}
-                    className="min-w-0 flex-1 bg-transparent text-base text-[#1a1c1e] outline-none sm:text-lg"
-                  />
-                </label>
-              </div>
-              <p className="text-xs font-semibold text-[#5f646b]">
-                Forecast-based scoring works for trips within 16 days and is strongest within 5-7 days from today.
-              </p>
-
-              {(startDate || endDate) ? (
-                <p className="text-center text-xs text-[#6b7078] sm:text-left">
-                  Trip window:{" "}
-                  <span className="text-[#9aa0a8]">{formatRangeInput(startDate, endDate)}</span>
+        <div
+          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "py-12 lg:py-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
+        >
+          {!report && (
+            <header className="text-center">
+              <div className="flex items-center gap-2 sm:gap-3 justify-center">
+                <span className="text-4xl leading-none sm:text-5xl lg:text-6xl" aria-hidden>
+                  ⛺️
+                </span>
+                <p
+                  className={`font-display tracking-tight text-[#1a1c1e] text-4xl font-extrabold sm:text-5xl lg:text-6xl`}
+                >
+                  Scout
                 </p>
-              ) : null}
-              {chartData?.forecastNotice ? (
-                <p className="text-xs text-[#7b8189]">
-                  {chartData.forecastNotice} Using {formatRange(chartData.forecastWindowUsed?.startDate || startDate, chartData.forecastWindowUsed?.endDate || endDate)} for forecast-dependent metrics.
-                </p>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={isScouting}
-                className={`mt-1 flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-bold text-white shadow-md transition sm:text-base ${
-                  isScouting
-                    ? "cursor-not-allowed bg-[#f1a64a]"
-                    : "bg-[#ea8a12] hover:brightness-110"
-                }`}
+              </div>
+              <div
+                className="mx-auto mt-3 flex w-full max-w-lg items-center gap-2.5 px-2 sm:mt-4 sm:max-w-2xl sm:gap-3"
+                role="presentation"
               >
-                {isScouting ? "Scouting..." : "Scout Area"}
-              </button>
+                <span
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#ea8a12] opacity-90 sm:min-w-12"
+                  aria-hidden
+                />
+                <p className="font-display shrink-0 text-base font-extrabold tracking-tight text-[#1a1c1e] sm:text-lg">
+                  Camp safer, Scout first.
+                </p>
+                <span
+                  className="h-0.5 min-w-8 flex-1 rounded-full bg-[#ea8a12] opacity-90 sm:min-w-12"
+                  aria-hidden
+                />
+              </div>
+            </header>
+          )}
+
+          {!report && (
+            <div
+              className="font-display flex flex-1 flex-col items-center justify-center px-2 pb-8 pt-6 sm:pt-10"
+              role="region"
+              aria-label="Trip planner"
+            >
+              <div className="w-full max-w-2xl space-y-10 text-center sm:space-y-12">
+                <div className="space-y-4">
+                  <p className="text-[clamp(1.45rem,5vw,2.35rem)] font-extrabold tracking-tight text-[#1a1c1e]">
+                    Welcome Camper!
+                  </p>
+                  <div className="flex justify-center gap-2.5 pt-1" aria-hidden>
+                    {[0, 1, 2, 3].map((i) => (
+                      <span
+                        key={i}
+                        className={`h-2 rounded-full transition-all duration-300 ${
+                          i === wizardStep ? "w-10 bg-[#ea8a12]" : "w-2 bg-[#eadfcd]"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {wizardStep === 0 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                      Where are you headed?
+                    </p>
+                    <div ref={suggestionsRef} className="relative w-full text-left">
+                      <label className="relative flex min-w-0 w-full items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:px-6 sm:py-5">
+                        <PinIcon className="h-7 w-7 shrink-0 text-[#d97706] sm:h-8 sm:w-8" />
+                        <input
+                          type="text"
+                          autoComplete="street-address"
+                          value={address}
+                          onChange={(e) => handleAddressChange(e.target.value)}
+                          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                          placeholder="Campsite or trailhead address"
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] sm:text-xl"
+                        />
+                      </label>
+                      {showSuggestions && (
+                        <ul className="absolute left-0 right-0 top-full z-50 mt-2 max-h-52 overflow-y-auto rounded-2xl border border-[#eadfcd]/90 bg-[#fffcf9]/95 py-1.5 text-base shadow-lg backdrop-blur-md sm:text-lg">
+                          {suggestions.map((s) => (
+                            <li
+                              key={s}
+                              onMouseDown={() => {
+                                setAddress(s);
+                                setSuggestions([]);
+                                setShowSuggestions(false);
+                              }}
+                              className="cursor-pointer truncate px-5 py-3 text-[#1a1c1e] transition hover:bg-[#fff3e0]/80"
+                            >
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="flex justify-center pt-2">
+                      <button
+                        type="button"
+                        disabled={!address.trim()}
+                        onClick={() => setWizardStep(1)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:px-14 sm:py-4 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 1 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                      When are you going?
+                    </p>
+                    <div className="grid w-full gap-4 sm:grid-cols-2 sm:gap-5">
+                      <label className="flex min-h-[3.5rem] items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:min-h-[4rem] sm:px-6 sm:py-5">
+                        <CalendarIcon className="h-7 w-7 shrink-0 text-[#8b8e94] sm:h-8 sm:w-8" />
+                        <span className="sr-only">Start date</span>
+                        <input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => {
+                            const nextStart = e.target.value;
+                            if (!nextStart) {
+                              setStartDate("");
+                              return;
+                            }
+                            setStartDate(nextStart);
+                            if (endDate && endDate < nextStart) {
+                              setEndDate(nextStart);
+                            }
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none sm:text-xl"
+                        />
+                      </label>
+                      <label className="flex min-h-[3.5rem] items-center gap-4 rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-4 shadow-sm backdrop-blur-sm transition focus-within:border-[#d97706]/60 focus-within:ring-4 focus-within:ring-[#f7d6ab]/50 sm:min-h-[4rem] sm:px-6 sm:py-5">
+                        <span className="sr-only">End date</span>
+                        <input
+                          type="date"
+                          min={startDate || undefined}
+                          value={endDate}
+                          onChange={(e) => {
+                            const nextEnd = e.target.value;
+                            if (!nextEnd) {
+                              setEndDate("");
+                              return;
+                            }
+                            let clampedEnd = nextEnd;
+                            if (startDate && clampedEnd < startDate) {
+                              clampedEnd = startDate;
+                            }
+                            setEndDate(clampedEnd);
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-lg text-[#1a1c1e] outline-none sm:text-xl"
+                        />
+                      </label>
+                    </div>
+                    <p className="text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
+                      Forecast-based scoring works for trips within 16 days and is strongest within 5-7 days from today.
+                    </p>
+                    {(startDate || endDate) && (
+                      <p className="text-sm text-[#6b7078] sm:text-base">
+                        Trip window{" "}
+                        <span className="font-semibold text-[#4f545c]">{formatRangeInput(startDate, endDate)}</span>
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(0)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!startDate || !endDate}
+                        onClick={() => setWizardStep(2)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:px-14 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 2 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <div className="space-y-2">
+                      <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
+                        Who&apos;s coming with you?
+                      </p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
+                      {COMPANION_TAGS.map((tag) => {
+                        const selected = companions.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => toggleCompanion(tag)}
+                            className={`rounded-full px-6 py-3.5 text-base font-bold transition sm:px-7 sm:py-4 sm:text-lg ${
+                              selected
+                                ? "bg-[#fff3e0] text-[#b45309] ring-2 ring-[#ea8a12]/60"
+                                : "bg-[#f5ebe0]/50 text-[#5f5450] ring-1 ring-[#eadfcd]/60 hover:bg-[#f0e4d4]/70"
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mx-auto w-full max-w-2xl pt-3 text-left">
+                      <label htmlFor="companion-details" className="block text-base font-bold text-[#3d4249] sm:text-lg">
+                        Further details <span className="font-semibold text-[#888780]">(optional)</span>
+                      </label>
+                      <textarea
+                        id="companion-details"
+                        rows={3}
+                        value={companionDetails}
+                        onChange={(e) => setCompanionDetails(e.target.value)}
+                        placeholder="Ages, group size, pets…"
+                        className="mt-3 min-h-[92px] w-full resize-y rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-3 text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] focus:border-[#d97706]/60 focus:ring-4 focus:ring-[#f7d6ab]/50 sm:min-h-[100px] sm:px-6 sm:py-3.5 sm:text-xl"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(1)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(3)}
+                        className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] sm:px-14 sm:text-lg"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {wizardStep === 3 && (
+                  <div className="flex flex-col gap-8 sm:gap-10">
+                    <div className="space-y-2">
+                      <p className="text-[clamp(1.35rem,4.5vw,2.25rem)] font-bold leading-snug text-[#3d4249] sm:font-extrabold">
+                        Any health considerations?
+                      </p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
+                      {HEALTH_TAGS.map((tag) => {
+                        const selected = healthConcerns.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => toggleHealth(tag)}
+                            className={`rounded-full px-6 py-3.5 text-base font-bold transition sm:px-7 sm:py-4 sm:text-lg ${
+                              selected
+                                ? "bg-[#fff3e0] text-[#b45309] ring-2 ring-[#ea8a12]/60"
+                                : "bg-[#f5ebe0]/50 text-[#5f5450] ring-1 ring-[#eadfcd]/60 hover:bg-[#f0e4d4]/70"
+                            }`}
+                          >
+                            {tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mx-auto w-full max-w-2xl pt-3 text-left">
+                      <label htmlFor="health-details" className="block text-base font-bold text-[#3d4249] sm:text-lg">
+                        Further details <span className="font-semibold text-[#888780]">(optional)</span>
+                      </label>
+                      <textarea
+                        id="health-details"
+                        rows={3}
+                        value={healthDetails}
+                        onChange={(e) => setHealthDetails(e.target.value)}
+                        placeholder="Medications, allergies, other notes…"
+                        className="mt-3 min-h-[92px] w-full resize-y rounded-2xl border-2 border-[#eadfcd]/90 bg-[#fffcf7]/70 px-5 py-3 text-lg text-[#1a1c1e] outline-none placeholder:text-[#9aa0a8] focus:border-[#d97706]/60 focus:ring-4 focus:ring-[#f7d6ab]/50 sm:min-h-[100px] sm:px-6 sm:py-3.5 sm:text-xl"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setWizardStep(2)}
+                        className="rounded-full px-8 py-3.5 text-base font-bold text-[#6b7078] transition hover:bg-[#fff3e0]/60 hover:text-[#1a1c1e] sm:px-10 sm:py-4 sm:text-lg"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isScouting}
+                        onClick={() => void runScoutTrip()}
+                        className={`rounded-full px-12 py-4 text-base font-extrabold text-white shadow-md transition active:scale-[0.98] sm:px-14 sm:text-lg ${
+                          isScouting ? "cursor-not-allowed bg-[#f1a64a]" : "bg-[#ea8a12] hover:brightness-110"
+                        }`}
+                      >
+                        {isScouting ? "Scouting…" : "Scout my trip!"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </form>
+          )}
 
           {errorMessage && (
-            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div
+              className={`rounded-xl border border-red-200/90 bg-red-50/90 px-4 py-3 text-center text-sm text-red-800 backdrop-blur-sm ${
+                report ? "mt-6" : "mx-auto mt-4 max-w-md"
+              }`}
+            >
               {errorMessage}
             </div>
           )}
 
           {report && (
-            <section className="mt-10">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <h2 className="font-display text-3xl font-bold text-[#1a1c1e] sm:text-4xl">
-                    {address}
-                  </h2>
-                  <p className="mt-1 text-sm text-[#888780]">
-                    {`Forecast window ${formatRange(startDate, endDate)}`}
-                  </p>
+            <section className="mt-0 pt-16">
+              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 py-5 text-[#f5f0e8] sm:px-6 lg:px-8">
+                <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center justify-start gap-2">
+                    <span className="text-2xl sm:text-3xl" aria-hidden>
+                      ⛺️
+                    </span>
+                    <span className="font-display text-2xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
+                      Scout
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-5 sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setReportView("main")}
+                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                        reportView === "main"
+                          ? "border-[#E8600A] text-[#f5f0e8]"
+                          : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
+                      }`}
+                    >
+                      Safety Breakdown
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReportView("packing")}
+                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                        reportView === "packing"
+                          ? "border-[#E8600A] text-[#f5f0e8]"
+                          : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
+                      }`}
+                    >
+                      Packing List
+                    </button>
+                    <button
+                      type="button"
+                      onClick={resetTripPlanner}
+                      className="rounded-[20px] bg-[#E8600A] px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-110"
+                    >
+                      Plan another trip
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </nav>
 
-              <div className="mt-6 space-y-5">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-stretch xl:gap-4">
-                  <article className="flex min-h-[260px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-5 shadow-sm ring-1 ring-[#f7d6ab] sm:p-6 xl:w-[300px] xl:self-stretch">
-                    <div>
-                      <p className="font-display text-center text-lg font-bold text-[#1a1c1e] sm:text-left">
-                        Overall Safety Score
+              {reportView === "packing" ? (
+                <div className="mt-5">
+                  {checklist && checklist.length > 0
+                    ? <GearChecklist sections={checklist} />
+                    : <p className="mt-8 text-center text-sm text-[#888780]">No packing list generated yet.</p>
+                  }
+                </div>
+              ) : (
+                <>
+                  <section className="mt-6">
+                    <h3 className="font-display border-b-2 border-[#ea8a12] pb-2 text-2xl font-extrabold tracking-tight text-[#1a1c1e] sm:text-3xl">
+                      Safety Breakdown
+                    </h3>
+                    <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
+                <article className="flex min-h-[240px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-4 shadow-sm ring-1 ring-[#f7d6ab] sm:p-5 xl:w-[300px] xl:self-stretch">
+                  <div>
+                    <p className="font-display inline-block text-lg font-bold text-[#b45309]">
+                      Overall Safety Score
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
+                      <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
+                        {normalizedOverallScore.toFixed(1)}
                       </p>
-                      <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
-                        <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
-                          {normalizedOverallScore.toFixed(1)}
-                        </p>
-                        <span className="pb-2 text-lg text-[#888780]">/ 10</span>
-                        {overall ? (
-                          <span
-                            className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
-                          >
-                            {overall.label}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
-                        10 is very safe, 1 is dangerous.
-                      </p>
-                      <p className="mt-3 text-center text-base leading-relaxed text-[#5f646b] sm:text-left">
-                        {report.status}
-                      </p>
-                    </div>
-                    <div className="mt-6 flex items-center justify-center">
-                      <div className="relative h-28 w-28">
-                        <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
-                          <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
-                          <circle
-                            cx="56"
-                            cy="56"
-                            r="46"
-                            stroke="url(#overallGaugeGradient)"
-                            strokeWidth="10"
-                            fill="none"
-                            strokeLinecap="round"
-                            strokeDasharray={2 * Math.PI * 46}
-                            strokeDashoffset={2 * Math.PI * 46 * (1 - normalizedOverallScore / 10)}
-                          />
-                          <defs>
-                            <linearGradient id="overallGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#dc2626" />
-                              <stop offset="55%" stopColor="#ea8a12" />
-                              <stop offset="100%" stopColor="#fbbf24" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                        <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
-                          {normalizedOverallScore.toFixed(1)}
+                      <span className="pb-2 text-lg text-[#888780]">/ 10</span>
+                      {overall ? (
+                        <span
+                          className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
+                        >
+                          {overall.label}
                         </span>
-                      </div>
+                      ) : null}
                     </div>
-                  </article>
-
-                  <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
+                    <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
+                      10 is very safe, 1 is dangerous.
+                    </p>
+                  </div>
+                  <div className="mt-6 flex items-center justify-center">
+                    <div className="relative h-28 w-28">
+                      <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
+                        <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
+                        <circle
+                          cx="56"
+                          cy="56"
+                          r="46"
+                          stroke="url(#overallGaugeGradient)"
+                          strokeWidth="10"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeDasharray={2 * Math.PI * 46}
+                          strokeDashoffset={2 * Math.PI * 46 * (1 - normalizedOverallScore / 10)}
+                        />
+                        <defs>
+                          <linearGradient id="overallGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stopColor="#dc2626" />
+                            <stop offset="55%" stopColor="#ea8a12" />
+                            <stop offset="100%" stopColor="#fbbf24" />
+                          </linearGradient>
+                        </defs>
+                      </svg>
+                      <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
+                        {normalizedOverallScore.toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                </article>
+                <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
                   {report.metrics
                     .filter((metric) => ["Fire Risk", "Air Quality", "Weather Alertness"].includes(metric.label))
                     .map((metric) => {
@@ -710,7 +1113,7 @@ export default function Home() {
                     return (
                       <article
                         key={metric.label}
-                        className="flex h-full min-h-[260px] flex-col rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-sm sm:p-6"
+                        className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
@@ -816,7 +1219,7 @@ export default function Home() {
                     );
                   })}
 
-                  <article className="flex h-full min-h-[260px] flex-col rounded-2xl border border-[#eadfcd] bg-white p-5 shadow-sm sm:p-6">
+                  <article className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5">
                       <div className="flex items-center justify-between gap-2">
                         <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
                           <span className="mr-1">🐻</span>
@@ -858,7 +1261,7 @@ export default function Home() {
                               ["Bear Risk"]: !previous["Bear Risk"],
                             }))
                           }
-                          className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                        className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
                           aria-expanded={isBearExpanded}
                           aria-label="Toggle Bear Risk details"
                         >
@@ -877,7 +1280,25 @@ export default function Home() {
                   </article>
                   </div>
                 </div>
-              </div>
+                  </section>
+
+                  <section className="mt-8">
+                    <h3 className="font-display border-b-2 border-[#ea8a12] pb-2 text-2xl font-extrabold tracking-tight text-[#1a1c1e] sm:text-3xl">
+                      Visualizations
+                    </h3>
+                    <div className="mt-3">
+                      <DashboardCharts
+                        chartSeed={chartSeed}
+                        temps={chartData?.temps}
+                        fireRisk={chartData?.fireRisk}
+                        airRisk={chartData?.airRisk}
+                        bearRisk={chartData?.bearRisk}
+                        startDate={startDate}
+                      />
+                    </div>
+                  </section>
+                </>
+              )}
               {(tripDays > 5 || tripDays > 10) && (
                 <p className="mt-4 text-xs text-[#8b8e94]">
                   Data coverage limits for this {tripDays}-day trip —{" "}
@@ -889,17 +1310,6 @@ export default function Home() {
             </section>
           )}
 
-          {report && (
-            <div className="mt-10 border-t border-[#e5e7eb] pt-10">
-              <DashboardCharts
-                chartSeed={chartSeed}
-                temps={chartData?.temps}
-                fireRisk={chartData?.fireRisk}
-                airRisk={chartData?.airRisk}
-                bearRisk={chartData?.bearRisk}
-              />
-            </div>
-          )}
         </div>
       </div>
     </div>
