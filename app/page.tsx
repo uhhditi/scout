@@ -293,7 +293,6 @@ type ReportResult = {
   bearDangerRating: number;
   bearRiskDetails: string[];
   airQualityUnavailable: boolean;
-  aiBriefing: string | null;
   forecastNotice?: string;
   forecastWindowUsed?: {
     startDate: string;
@@ -307,9 +306,7 @@ async function generateSafetyReportFromAPI(
   startDate: string,
   endDate: string,
   distance: number,
-  groupProfile: GroupProfile,
-  partySize: string,
-  userNotes: string
+  groupProfile: GroupProfile
 ): Promise<ReportResult> {
   try {
     const url = `/api/conditions?address=${encodeURIComponent(address)}&startDate=${startDate}&endDate=${endDate}&distance=${distance}`;
@@ -449,76 +446,6 @@ async function generateSafetyReportFromAPI(
     const adjustedWeatherAlertness = adjustedRiskScores.weather * 10;
     const overallSafety = Math.max(0, 10 - adjustedRiskScores.overall);
     const tempsWindow = weatherDaily.temperature_2m_max || [];
-    const tempLow = tempsWindow.length ? Math.min(...tempsWindow) : 50;
-    const tempHigh = tempsWindow.length ? Math.max(...tempsWindow) : 70;
-
-    let aiBriefing: string | null = null;
-    try {
-      const precipProbWindow = (weatherDaily.precipitation_probability_max || []).slice(0, tripDaysCount);
-      const precipChance =
-        precipProbWindow.length > 0
-          ? Math.round(Math.max(...precipProbWindow))
-          : wettestDay > 15
-            ? 65
-            : wettestDay > 5
-              ? 35
-              : wettestDay > 1
-                ? 18
-                : 8;
-
-      const fireRiskLabel =
-        adjustedFireRisk >= 65 ? "extreme" : adjustedFireRisk >= 40 ? "high" : adjustedFireRisk >= 20 ? "moderate" : "low";
-
-      const round1 = (n: number) => Math.round(n * 10) / 10;
-      const briefingTripNights = Math.max(0, tripDaysCount - 1);
-
-      const briefingNotes = [
-        userNotes.trim(),
-        airQualityUnavailable ? "Forecast APIs did not return AQI values for these dates." : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-
-      const briefingRes = await fetch("/api/briefing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          address,
-          conditions: {
-            tempLow: Math.round(tempLow),
-            tempHigh: Math.round(tempHigh),
-            windSpeed: round1(kmhToMph(strongestWind)),
-            precipChance,
-            aqi: airQualityUnavailable ? null : Math.round(avgAqi),
-            fireRiskLabel,
-          },
-          scores: {
-            overall: round1(adjustedRiskScores.overall),
-            weather: round1(adjustedRiskScores.weather),
-            temperature: round1(adjustedRiskScores.temperature),
-            wind: round1(adjustedRiskScores.wind),
-            precipitation: round1(adjustedRiskScores.precipitation),
-            fire: round1(adjustedRiskScores.fire),
-            airQuality: round1(adjustedRiskScores.airQuality),
-          },
-          group: {
-            vulnerableMembers: groupProfile.vulnerableMembers,
-            medicalConditions: groupProfile.medicalConditions,
-          },
-          partySize,
-          tripDays: briefingTripNights,
-          userNotes: briefingNotes,
-        }),
-      });
-
-      const briefingJson = await briefingRes.json().catch(() => ({}));
-      aiBriefing = typeof briefingJson?.briefing === "string" && briefingJson.briefing.trim().length > 0
-        ? briefingJson.briefing.trim()
-        : null;
-    } catch {
-      aiBriefing = null;
-    }
-
     const metrics = [
       {
         label: "Fire Risk",
@@ -581,7 +508,6 @@ async function generateSafetyReportFromAPI(
       bearDangerRating,
       bearRiskDetails,
       airQualityUnavailable: !!airQualityUnavailable,
-      aiBriefing,
       forecastNotice,
       forecastWindowUsed,
       weatherCtx,
@@ -691,10 +617,6 @@ export default function Home() {
         if (tag === "Respiratory illness/condition") return "respiratory";
         return tag.toLowerCase();
       });
-      const partySize = companions.length > 0 ? `${companions.length + 1}+` : "not specified";
-      const userNotes = [companionDetails.trim(), healthDetails.trim()]
-        .filter(Boolean)
-        .join(" | ");
 
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
         address,
@@ -704,9 +626,7 @@ export default function Home() {
         {
           vulnerableMembers,
           medicalConditions,
-        },
-        partySize,
-        userNotes
+        }
       );
       setReport(nextReport);
       setReportGeneratedAt(new Date().toISOString());
@@ -752,6 +672,9 @@ export default function Home() {
           {!report && (
             <header className="text-center">
               <div className="flex items-center gap-2 sm:gap-3 justify-center">
+                <span className="text-4xl leading-none sm:text-5xl lg:text-6xl" aria-hidden>
+                  ⛺️
+                </span>
                 <p
                   className={`font-display tracking-tight text-[#1a1c1e] text-4xl font-extrabold sm:text-5xl lg:text-6xl`}
                 >
@@ -1140,9 +1063,6 @@ export default function Home() {
                     </div>
                     <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
                       10 is very safe, 1 is dangerous.
-                    </p>
-                    <p className="mt-3 text-base leading-relaxed text-black sm:text-lg">
-                      {chartData?.aiBriefing ?? "AI briefing unavailable for this trip."}
                     </p>
                   </div>
                   <div className="mt-6 flex items-center justify-center">

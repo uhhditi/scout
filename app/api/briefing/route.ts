@@ -93,7 +93,6 @@ export async function POST(request: Request) {
 
     const payload = (await request.json()) as BriefingRequest;
     const prompt = buildPrompt(payload);
-    console.log("[briefing] Gemini prompt:\n", prompt);
     const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash";
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -112,7 +111,6 @@ export async function POST(request: Request) {
 
     if (!geminiRes.ok) {
       const detail = await geminiRes.text().catch(() => "");
-      console.log("Gemini error:", `Model ${model} failed (${geminiRes.status}). ${detail}`);
       return NextResponse.json(
         {
           error: "Gemini request failed.",
@@ -125,7 +123,6 @@ export async function POST(request: Request) {
 
     const data = await geminiRes.json();
     const briefing = extractBriefing(data);
-    console.log("[briefing] Gemini output:\n", briefing);
     return NextResponse.json({ briefing: briefing || null });
   } catch (error) {
     return NextResponse.json(
