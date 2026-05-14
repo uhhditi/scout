@@ -927,7 +927,7 @@ export default function Home() {
                       <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
                         Who&apos;s coming with you?
                       </p>
-                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply (optional).</p>
                     </div>
                     <div className="flex flex-col items-center gap-3 sm:gap-3.5">
                       {[COMPANION_TAGS.slice(0, 4), COMPANION_TAGS.slice(4)].map((row, rowIdx) => (
@@ -993,7 +993,7 @@ export default function Home() {
                       <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
                         Any health considerations?
                       </p>
-                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply (optional).</p>
                     </div>
                     <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
                       {HEALTH_TAGS.map((tag) => {
@@ -1146,8 +1146,8 @@ export default function Home() {
                           Book a site
                         </h2>
                         <p className="pt-1 text-sm leading-snug text-[#5c534c] sm:text-[0.9375rem] lg:text-base">
-                          Recreation.gov listings ranked by amenity and safety fit for your group. Always confirm dates
-                          and availability on the official site.
+                          Recommendations are tailored to your trip details, companions, and safety profile, then ordered by
+                          amenity and fit. Always confirm dates and availability on Recreation.gov before you book.
                         </p>
                       </div>
                       {report ? (
@@ -1310,7 +1310,7 @@ export default function Home() {
                                         {row.safetyScoreUsesTripOrigin ? (
                                           <span>(same area as your trip)</span>
                                         ) : (
-                                          <span>(conditions unavailable — trip score shown)</span>
+                                          <span>(conditions unavailable; trip score shown)</span>
                                         )}
                                       </p>
                                     ) : null}
@@ -1438,32 +1438,32 @@ export default function Home() {
                     <h3 className="font-display border-b-2 border-[#ea8a12] pb-1.5 text-left text-lg font-extrabold tracking-tight text-[#1a1c1e] sm:text-xl">
                       Safety Breakdown
                     </h3>
-                    <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
-                <article className="flex min-h-[240px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-4 shadow-sm ring-1 ring-[#f7d6ab] sm:p-5 xl:w-[300px] xl:self-stretch">
+                    <div className="mt-3 flex flex-col gap-2.5 xl:flex-row xl:items-stretch xl:gap-2.5">
+                <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-3 shadow-sm ring-1 ring-[#f7d6ab] sm:p-4 xl:w-[260px] xl:self-stretch">
                   <div>
-                    <p className="font-display inline-block text-lg font-bold text-[#b45309]">
+                    <p className="font-display inline-block text-base font-bold text-[#4a3426]">
                       Overall Safety Score
                     </p>
-                    <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
-                      <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
+                    <div className="mt-2 flex flex-wrap items-end justify-center gap-2 sm:justify-start">
+                      <p className="font-display text-3xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-4xl">
                         {normalizedOverallScore.toFixed(1)}
                       </p>
-                      <span className="pb-2 text-lg text-[#888780]">/ 10</span>
+                      <span className="pb-1.5 text-base text-[#888780]">/ 10</span>
                       {overall ? (
                         <span
-                          className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
+                          className={`mb-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${overall.className}`}
                         >
                           {overall.label}
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
+                    <p className="mt-1.5 text-center text-xs font-semibold text-[#2d2926] sm:text-left">
                       10 is very safe, 1 is dangerous.
                     </p>
                   </div>
-                  <div className="mt-6 flex items-center justify-center">
-                    <div className="relative h-28 w-28">
-                      <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
+                  <div className="mt-4 flex items-center justify-center">
+                    <div className="relative h-24 w-24">
+                      <svg viewBox="0 0 112 112" className="h-24 w-24 -rotate-90" aria-hidden>
                         <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
                         <circle
                           cx="56"
@@ -1484,13 +1484,13 @@ export default function Home() {
                           </linearGradient>
                         </defs>
                       </svg>
-                      <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-[#6b7078]">
                         {normalizedOverallScore.toFixed(1)}
                       </span>
                     </div>
                   </div>
                 </article>
-                <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
+                <div className="grid min-w-0 flex-1 grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-2.5">
                   {report.metrics
                     .filter((metric) => ["Fire Risk", "Air Quality", "Weather Alertness"].includes(metric.label))
                     .map((metric) => {
@@ -1509,10 +1509,10 @@ export default function Home() {
                     return (
                       <article
                         key={metric.label}
-                        className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5"
+                        className="flex h-full min-h-[200px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-3 shadow-sm sm:p-4"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
+                          <p className="font-display text-sm font-bold text-[#1a1c1e] sm:text-base">
                             <span className="mr-1">{metric.icon}</span>
                             {metric.label === "Fire Risk"
                               ? "Fire Risk Level"
@@ -1532,7 +1532,7 @@ export default function Home() {
                             </span>
                           )}
                         </div>
-                        <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                        <p className="font-display mt-3 text-2xl font-bold tracking-tight text-[#1a1c1e] sm:text-3xl">
                           {metric.label === "Air Quality"
                             ? chartData?.airQualityUnavailable
                               ? "N/A"
@@ -1541,7 +1541,7 @@ export default function Home() {
                               ? chartData?.weatherHazardLabel ?? primary.value
                             : primary.value}
                         </p>
-                        <p className="mt-1 text-sm text-[#6b7078]">
+                        <p className="mt-1 text-xs text-[#6b7078]">
                           {metric.label === "Air Quality" && chartData?.airQualityUnavailable
                             ? "Air quality forecasts are only available 5 days ahead (CAMS model limit)"
                             : metric.label === "Air Quality"
@@ -1558,7 +1558,7 @@ export default function Home() {
                               return (
                                 <span
                                   key={idx}
-                                  className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                                  className={`h-2 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
                                   aria-hidden
                                 />
                               );
@@ -1568,18 +1568,7 @@ export default function Home() {
                         {metric.label === "Fire Risk" && (
                           <p className="mt-2 text-xs text-[#8b8e94]">1 = little to no risk, 5 = high wildfire risk.</p>
                         )}
-                        <p className="mt-2 text-xs text-[#8b8e94]">
-                          {metric.label === "Fire Risk"
-                            ? ""
-                            : metric.label === "Air Quality"
-                            ? ""
-                            : metric.label === "Air Quality" && chartData?.airQualityUnavailable
-                            ? ""
-                            : metric.label === "Weather Alertness"
-                              ? `Hazard score: ${chartData?.weatherHazardScore ?? 0} / 100`
-                              : secondary.line}
-                        </p>
-                        <div className="mt-4">
+                        <div className="mt-3">
                           <button
                             type="button"
                             onClick={() =>
@@ -1588,7 +1577,7 @@ export default function Home() {
                                 [metric.label]: !previous[metric.label],
                               }))
                             }
-                            className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                            className="rounded-lg border border-orange-200 bg-orange-100 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
                             aria-expanded={isExpanded}
                             aria-label={`Toggle ${metric.label} details`}
                           >
@@ -1596,7 +1585,7 @@ export default function Home() {
                           </button>
                         </div>
                         {isExpanded && (
-                          <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                          <div className="mt-3 border-t border-[#d9dde3] pt-2.5 text-sm text-[#374151]">
                             {metric.label === "Air Quality" ? (
                               <p>
                                 Air forecast data is typically available and most accurate for up to about 5 days from today.
@@ -1615,9 +1604,9 @@ export default function Home() {
                     );
                   })}
 
-                  <article className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5">
+                  <article className="flex h-full min-h-[200px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-3 shadow-sm sm:p-4">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
+                        <p className="font-display text-sm font-bold text-[#1a1c1e] sm:text-base">
                           <span className="mr-1">🐻</span>
                           Bear Risk Level
                         </p>
@@ -1627,28 +1616,28 @@ export default function Home() {
                           {wildlifeTone.label}
                         </span>
                       </div>
-                      <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                      <p className="font-display mt-3 text-2xl font-bold tracking-tight text-[#1a1c1e] sm:text-3xl">
                         {bearDangerRating} / 5
                       </p>
-                      <p className="mt-1 text-sm text-[#6b7078]">
+                      <p className="mt-1 text-xs text-[#6b7078]">
                         Bear danger rating based on elevation, latitude, and seasonality.
                       </p>
-                      <div className="mt-4 flex items-center gap-2">
+                      <div className="mt-3 flex items-center gap-2">
                         {Array.from({ length: 5 }).map((_, idx) => {
                           const active = idx < bearDangerRating;
                           return (
                             <span
                               key={idx}
-                              className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                              className={`h-2 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
                               aria-hidden
                             />
                           );
                         })}
                       </div>
-                      <div className="mt-3 text-xs text-[#8b8e94]">
+                      <div className="mt-2 text-xs text-[#8b8e94]">
                         1 = minimal activity, 5 = highest observed bear activity conditions.
                       </div>
-                      <div className="mt-4">
+                      <div className="mt-3">
                         <button
                           type="button"
                           onClick={() =>
@@ -1657,7 +1646,7 @@ export default function Home() {
                               ["Bear Risk"]: !previous["Bear Risk"],
                             }))
                           }
-                        className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                          className="rounded-lg border border-orange-200 bg-orange-100 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
                           aria-expanded={isBearExpanded}
                           aria-label="Toggle Bear Risk details"
                         >
@@ -1665,7 +1654,7 @@ export default function Home() {
                         </button>
                       </div>
                       {isBearExpanded && (
-                        <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                        <div className="mt-3 border-t border-[#d9dde3] pt-2.5 text-sm text-[#374151]">
                           <ul className="mt-0 list-disc space-y-1 pl-5">
                             {(chartData?.bearRiskDetails ?? detailTextByMetric["Bear Risk"] ?? []).map((detail) => (
                               <li key={detail}>{detail}</li>
@@ -1699,13 +1688,13 @@ export default function Home() {
                             <p className="font-display text-lg font-bold text-[#1a1c1e] sm:text-xl">Packing list</p>
                           </div>
                           <p className="mt-3 text-sm leading-relaxed text-[#5f5450] sm:text-base">
-                            Check off gear matched to your group, health notes, and forecast—before you load the car.
+                            Check off gear matched to your group, health notes, and forecast before you load the car.
                           </p>
                         </div>
                         <button
                           type="button"
                           onClick={() => setReportView("packing")}
-                          className="mt-5 w-full rounded-full bg-[#ea8a12] py-3 text-sm font-extrabold text-white shadow-sm transition hover:brightness-110 sm:text-base"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base"
                         >
                           Open packing list
                         </button>
@@ -1726,9 +1715,9 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => setReportView("bookings")}
-                          className="mt-5 w-full rounded-full bg-[#ea8a12] py-3 text-sm font-extrabold text-white shadow-sm transition hover:brightness-110 sm:text-base"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base"
                         >
-                          Booking tips &amp; links
+                          View site recommendations
                         </button>
                       </article>
                     </div>
@@ -1737,7 +1726,7 @@ export default function Home() {
               )}
               {reportView === "main" && (tripDays > 5 || tripDays > 10) && (
                 <p className="mt-4 text-xs text-[#8b8e94]">
-                  Data coverage limits for this {tripDays}-day trip —{" "}
+                  Data coverage limits for this {tripDays}-day trip:{" "}
                   <span className="font-medium">Air quality:</span> 5 days ahead (CAMS model);{" "}
                   {tripDays > 10 && <><span className="font-medium">Fire proximity:</span> past 10 days (NASA FIRMS); </>}
                   <span className="font-medium">Wind, precipitation &amp; temperature:</span> 16 days ahead.
