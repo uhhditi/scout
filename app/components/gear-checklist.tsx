@@ -48,22 +48,36 @@ export function GearChecklist({ sections }: { sections: ChecklistSection[] }) {
   }
 
   return (
-    <div className="mt-10 border-t border-[#e5e7eb] pt-10">
-      <div className="mb-6 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 className="font-display text-2xl font-bold text-[#1a1c1e] sm:text-3xl">
-            Gear Checklist
-          </h2>
-          <p className="mt-1 text-sm text-[#888780]">
-            Essential items personalized to your trip profile and forecast conditions.
-          </p>
+    <div className="space-y-5">
+      <header className="border-b border-[#eadfcd] border-l-4 border-l-[#ea8a12] pb-5 pl-5 text-left sm:pl-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-8 lg:gap-10">
+          <div className="min-w-0 flex-1 space-y-2">
+            <p className="text-[0.65rem] font-bold uppercase tracking-[0.22em] text-[#ea8a12] sm:text-xs">
+              Essential gear
+            </p>
+            <h2 className="font-display text-[1.65rem] font-extrabold leading-[1.1] tracking-tight text-[#1a1c1e] sm:text-3xl lg:text-[2rem]">
+              Packing List
+            </h2>
+            <p className="pt-1 text-sm leading-snug text-[#5c534c] sm:text-[0.9375rem] lg:text-base">
+              Essential items personalized to your trip profile and forecast conditions.
+            </p>
+          </div>
+          <div className="shrink-0 border-t border-[#eadfcd] pt-4 sm:border-t-0 sm:pt-0 sm:text-right">
+            <p className="text-[0.65rem] font-bold uppercase tracking-[0.22em] text-[#ea8a12] sm:text-xs">
+              Progress
+            </p>
+            <div className="mt-1 flex flex-wrap items-end justify-center gap-1 sm:justify-end">
+              <p className="font-display text-3xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-4xl">
+                {checkedCount}
+              </p>
+              <span className="pb-1 text-base text-[#888780] sm:text-lg">/ {totalItems}</span>
+            </div>
+            <p className="mt-1 text-[11px] text-[#6b6560] sm:text-xs">items packed</p>
+          </div>
         </div>
-        <span className="text-sm font-semibold text-[#6b7078]">
-          {checkedCount} / {totalItems} packed
-        </span>
-      </div>
+      </header>
 
-      <div className="mb-6 h-2 w-full overflow-hidden rounded-full bg-[#e5e7eb]">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-[#e5e7eb]">
         <div
           className="h-2 rounded-full bg-[#ea8a12] transition-all duration-300"
           style={{ width: totalItems > 0 ? `${(checkedCount / totalItems) * 100}%` : "0%" }}
