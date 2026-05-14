@@ -40,6 +40,25 @@ function ridbFacilityCoords(f: Record<string, unknown>): { lat: number; lon: num
   return { lat, lon };
 }
 
+/** RIDB often omits Reservable; only drop when explicitly false. */
+function isExplicitlyNonReservable(reservable: unknown): boolean {
+  if (reservable === false) return true;
+  if (reservable === 0) return true;
+  if (typeof reservable !== "string") return false;
+  const s = reservable.trim().toLowerCase();
+  return s === "false" || s === "no" || s === "0";
+}
+
+function facilityDescriptionLooksClosed(desc: string): boolean {
+  const d = desc.trim();
+  if (!d) return false;
+  if (/\b(temporarily\s+closed|no\s+reservations)\b/i.test(d)) return true;
+  if (/\bnot\s+accepting\s+reservations\b/i.test(d)) return true;
+  if (/\bclosed\s+(?:for|to|until|through)\b/i.test(d)) return true;
+  if (/\b(?:campground|facility|area|park)\s+(?:is\s+)?closed\b/i.test(d)) return true;
+  return false;
+}
+
 function normalizeTripSafetyScore(raw: unknown): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
   const x = raw > 10 ? raw / 10 : raw;
@@ -204,7 +223,7 @@ export async function POST(request: NextRequest) {
   ridbUrl.searchParams.set("radius", String(searchRadiusMiles));
   ridbUrl.searchParams.set("activity", "9,109");
   ridbUrl.searchParams.set("full", "true");
-  ridbUrl.searchParams.set("limit", "50");
+  ridbUrl.searchParams.set("limit", "100");
 
   await limiter.acquire();
   const ridbRes = await fetch(ridbUrl, {
@@ -235,10 +254,9 @@ export async function POST(request: NextRequest) {
   // ── Pass 1: filter, score amenities, sort by amenity fit ─────────────────
   const candidates = rawList
     .map((f) => {
-      const reservable = f.Reservable === true || f.Reservable === "true";
-      if (!reservable) return null;
+      if (isExplicitlyNonReservable(f.Reservable)) return null;
       const desc = String(f.FacilityDescription ?? "");
-      if (/\b(closed|temporarily closed|closure|not accepting|no reservations)\b/i.test(desc)) return null;
+      if (facilityDescriptionLooksClosed(desc)) return null;
       const coords = ridbFacilityCoords(f);
       if (!coords) return null;
       const dMi = haversineMiles(originLat, originLon, coords.lat, coords.lon);
