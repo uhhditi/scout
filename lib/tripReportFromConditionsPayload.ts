@@ -6,6 +6,8 @@ import {
   calculateBearRisk,
   getBearDangerRating,
   calculateOverallSafetyScore,
+  calculateElevationMobilityRisk,
+  terrainRoughnessLabel,
   applyGroupMultipliers,
   type GroupProfile,
   type RiskScores,
@@ -36,6 +38,11 @@ export type TripReportResult = {
   bearRisk: number;
   bearDangerRating: number;
   bearRiskDetails: string[];
+  terrainDifficultyScore: number;
+  terrainDifficultyLevel: number;
+  terrainElevationDetails: string[];
+  terrainLabel: string;
+  nwsAlertEvents: string[];
   airQualityUnavailable: boolean;
   conditionsNotice?: string;
   dataSummaryIncomplete?: boolean;
@@ -182,6 +189,13 @@ export function buildReportResultFromConditionsPayload(
     `Your area elevation is ${Math.round(metersToFeet(areaElevation))} ft, and higher elevation areas generally see more bear activity.`,
     "Store all food and scented items in bear-proof containers or hang them properly.",
   ];
+  const baseTerrainScore = calculateElevationMobilityRisk(areaElevation, 0);
+  const terrainDifficultyScore = baseTerrainScore;
+  const terrainDifficultyLevel = Math.max(1, Math.min(5, Math.ceil(terrainDifficultyScore / 20)));
+  const terrainLabel = terrainRoughnessLabel(0);
+  const terrainElevationDetails: string[] = [
+    `Elevation: ${Math.round(metersToFeet(areaElevation))} ft — ${terrainLabel.toLowerCase()} terrain.${areaElevation > 2000 ? " High altitude increases physical effort and acclimatization time." : areaElevation > 1000 ? " Moderate elevation with some stamina demands on trail." : " Relatively low elevation."}`,
+  ];
 
   const overallSafetyRaw = calculateOverallSafetyScore(fireRisk, airQualityRisk, weatherAlertness, bearRisk);
   const maxTemp = (weatherDaily.temperature_2m_max || []).length ? Math.max(...weatherDaily.temperature_2m_max) : 20;
@@ -275,6 +289,11 @@ export function buildReportResultFromConditionsPayload(
     bearRisk,
     bearDangerRating,
     bearRiskDetails,
+    terrainDifficultyScore,
+    terrainDifficultyLevel,
+    terrainElevationDetails,
+    terrainLabel,
+    nwsAlertEvents: [],
     airQualityUnavailable: !!airQualityUnavailable,
     conditionsNotice,
     dataSummaryIncomplete,
