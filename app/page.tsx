@@ -1805,15 +1805,6 @@ export default function Home() {
                         {metric.label === "Fire Risk" && (
                           <p className="mt-2 text-xs text-[#8b8e94]">1 = little to no risk, 5 = high wildfire risk.</p>
                         )}
-                        <p className="mt-2 text-xs text-[#8b8e94]">
-                          {metric.label === "Fire Risk"
-                            ? ""
-                            : metric.label === "Air Quality"
-                            ? ""
-                            : metric.label === "Weather Alertness"
-                              ? `Hazard score: ${chartData?.weatherHazardScore ?? 0} / 100`
-                              : secondary.line}
-                        </p>
                         <div className="mt-4">
                           <button
                             type="button"
@@ -1831,7 +1822,7 @@ export default function Home() {
                           </button>
                         </div>
                         {isExpanded && (
-                          <div className="mt-3 border-t border-[#d9dde3] pt-2.5 text-sm text-[#374151]">
+                          <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
                             {metric.label === "Air Quality" ? (
                               <p>
                                 Air forecast data is typically available and most accurate for up to about 5 days from today.
