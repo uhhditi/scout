@@ -1811,7 +1811,7 @@ export default function Home() {
                             : metric.label === "Air Quality"
                             ? ""
                             : metric.label === "Weather Alertness"
-                              ? `Hazard score: ${chartData?.weatherHazardScore ?? 0} / 100`
+                              ? ""
                               : secondary.line}
                         </p>
                         <div className="mt-4">
@@ -1860,9 +1860,16 @@ export default function Home() {
                         {terrainTone.label}
                       </span>
                     </div>
-                    <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
-                      Difficulty {terrainDifficultyLevel}
-                    </p>
+                    <div className="mt-4 flex items-center gap-2">
+                      <p className="font-display text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                        Difficulty {terrainDifficultyLevel}
+                      </p>
+                      {chartData?.terrainElevationDetails?.[0]?.includes("below sea level") && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-blue-700 uppercase ring-1 ring-blue-200">
+                          Below Sea Level
+                        </span>
+                      )}
+                    </div>
                     <p className="mt-1 text-sm text-[#6b7078]">
                       Campground difficulty based on elevation and terrain.{chartData?.terrainLabel ? ` Terrain: ${chartData.terrainLabel}.` : ""}
                     </p>

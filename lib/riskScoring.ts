@@ -89,7 +89,7 @@ function fireProximityAddFromMinKm(minKm: number | null, hasFires: boolean): num
   if (minKm < 5) return 55;
   if (minKm < 15) return 38;
   if (minKm < 30) return 28;
-  return Math.min(45, Math.round(38 * Math.exp(-minKm / 20)));
+  return Math.max(0, Math.round(28 * Math.exp(-(minKm - 30) / 25)));
 }
 
 /**
@@ -234,7 +234,7 @@ export function calculateWeatherAlertness(
   let maxAlertness = 0;
 
   for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
-    let score = 20;
+    let score = 8;
 
     const weatherCode = weatherDaily.weathercode[dayIndex] || 0;
     const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
@@ -255,10 +255,12 @@ export function calculateWeatherAlertness(
     else if (windSpeed > 30) score += 10;
 
     if (tempMax !== null) {
-      if (tempMax > 40) score += 45;       // extreme heat >104°F
-      else if (tempMax > 36) score += 30;  // dangerous heat >97°F
-      else if (tempMax > 32) score += 18;  // high heat >90°F
-      else if (tempMax > 28) score += 8;   // warm >82°F
+      if (tempMax > 50) score += 75;       // lethal heat >122°F — floor overall at 90+
+      else if (tempMax > 45) score += 60;  // extreme heat >113°F
+      else if (tempMax > 40) score += 45;  // dangerous heat >104°F
+      else if (tempMax > 36) score += 30;  // high heat >97°F
+      else if (tempMax > 32) score += 18;  // warm >90°F
+      else if (tempMax > 28) score += 8;   // mild >82°F
       else if (tempMax < -15) score += 40; // extreme cold <5°F
       else if (tempMax < -5) score += 25;  // severe cold <23°F
       else if (tempMax < 0) score += 12;   // freezing
@@ -270,7 +272,7 @@ export function calculateWeatherAlertness(
 
   // NWS active alerts add a floor — the worst active warning wins
   const alertBoost = nwsAlertBoost(nwsAlertEvents);
-  maxAlertness = Math.max(maxAlertness, alertBoost + 20);
+  maxAlertness = Math.max(maxAlertness, alertBoost + 8);
 
   // FEMA flood zone adds a static hazard floor independent of daily weather
   let floodFloor = 0;
@@ -310,8 +312,8 @@ function nwsAlertBoost(events: string[]): number {
     else if (e.includes("high wind warning")) b = 30;
     else if (e.includes("high wind watch")) b = 20;
     else if (e.includes("high wind advisory")) b = 15;
-    else if (e.includes("excessive heat warning")) b = 30;
-    else if (e.includes("heat advisory")) b = 15;
+    else if (e.includes("excessive heat warning")) b = 48;
+    else if (e.includes("heat advisory")) b = 25;
     else if (e.includes("red flag warning")) b = 20;
     else if (e.includes("flood warning")) b = 30;
     else if (e.includes("flood watch")) b = 18;
@@ -434,10 +436,11 @@ export function terrainRoughnessLabel(roughness: number): string {
 export function calculateElevationMobilityRisk(elevation: number, terrainRoughness: number): number {
   let score = 5;
 
-  if (elevation > 3000) score += 55;
-  else if (elevation > 2000) score += 35;
-  else if (elevation > 1000) score += 20;
-  else if (elevation > 500) score += 10;
+  const absElevation = Math.abs(elevation);
+  if (absElevation > 3000) score += 55;
+  else if (absElevation > 2000) score += 35;
+  else if (absElevation > 1000) score += 20;
+  else if (absElevation > 500) score += 10;
 
   if (terrainRoughness >= 70) score += 30;
   else if (terrainRoughness >= 45) score += 20;
@@ -476,7 +479,10 @@ export function calculateOverallSafetyScore(
     airSafety * 0.20 +
     bearSafety * 0.13;
 
-  return Math.round(weighted) / 10;
+  const worstSafety = Math.min(fireSafety, weatherSafety, airSafety, bearSafety);
+  const floored = Math.min(weighted, worstSafety + 15);
+
+  return Math.round(floored) / 10;
 }
 
 export interface RiskScores {
