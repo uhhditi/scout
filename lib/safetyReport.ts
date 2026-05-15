@@ -3,6 +3,7 @@ export type SafetyMetric = {
   value: number;
   note: string;
   icon: string;
+  rawAqi?: number;
 };
 
 export type SafetyReport = {

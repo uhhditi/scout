@@ -9,6 +9,9 @@ import {
   calculateBearRisk,
   getBearDangerRating,
   calculateOverallSafetyScore,
+  calculateTerrainRoughness,
+  calculateElevationMobilityRisk,
+  terrainRoughnessLabel,
   applyGroupMultipliers,
   type GroupProfile,
   type RiskScores,
@@ -72,6 +75,11 @@ function kmhToMph(kmh: number) {
 
 function metersToFeet(meters: number) {
   return meters * 3.28084;
+}
+
+function formatElevation(meters: number) {
+  const ft = Math.round(Math.abs(meters) * 3.28084);
+  return meters < 0 ? `${ft} ft below sea level` : `${ft} ft`;
 }
 
 function mmToInches(mm: number) {
@@ -171,19 +179,20 @@ function metricSecondary(metric: SafetyMetric) {
   const v = metric.value;
   switch (metric.label) {
     case "Fire Risk": {
-      const level = Math.max(1, Math.min(5, Math.round(6 - (v / 100) * 5)));
+      const level = v >= 80 ? 1 : v >= 55 ? 2 : v >= 35 ? 3 : v >= 18 ? 4 : 5;
       const pill =
         level <= 2 ? "Low" : level === 3 ? "Moderate" : level === 4 ? "High" : "Severe";
       return { line: "", pill };
     }
     case "Air Quality": {
-      const aqi = Math.round(Math.max(28, Math.min(165, 175 - v * 1.25)));
-      const pill = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : "Sensitive";
-      return { line: `${aqi} AQI`, pill };
+  // v is (100 - airQualityRisk), so risk = 100 - v
+      const risk = 100 - v;
+      const pill = risk <= 25 ? "Good" : risk <= 45 ? "Moderate" : "Sensitive";
+      return { line: "", pill };
     }
     case "Weather Alertness": {
       const temp = 52 + (v % 34);
-      const pill = v >= 75 ? "Low" : v >= 55 ? "Moderate" : "High";
+      const pill = v >= 75 ? "Low" : v >= 55 ? "Moderate" : v >= 35 ? "High" : "Extreme";
       return { line: `${temp}° projected`, pill };
     }
     case "Bear Risk": {
@@ -200,19 +209,20 @@ function metricPrimary(metric: SafetyMetric) {
   const v = metric.value;
   switch (metric.label) {
     case "Fire Risk": {
-      const level = Math.max(1, Math.min(5, Math.round(6 - (v / 100) * 5)));
+      const level = v >= 80 ? 1 : v >= 55 ? 2 : v >= 35 ? 3 : v >= 18 ? 4 : 5;
       return { value: `Risk ${level}`, subtitle: "Risk level based on current proximity to wildfire and adverse conditions." };
     }
     case "Air Quality": {
-      const aqi = Math.round(Math.max(28, Math.min(165, 175 - v * 1.25)));
-      return { value: `${aqi} AQI`, subtitle: "Current particulate estimate" };
-    }
+  const aqi = metric.rawAqi ?? 0;
+  const label = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : aqi <= 150 ? "Unhealthy (Sensitive)" : "Unhealthy";
+  return { value: `${aqi} AQI`, subtitle: `Trip average — ${label}` };
+}
     case "Weather Alertness": {
       const temp = 52 + (v % 34);
       return { value: `${temp}° Temp`, subtitle: "Expected daytime high" };
     }
     case "Bear Risk":
-      return { value: `Risk ${Math.round(100 - v)}`, subtitle: "Bear activity risk based on elevation and season" };
+      return { value: `Risk ${Math.round(100 - v)}`, subtitle: "Bear activity risk based on elevation, season, and recent sightings" };
     default:
       return { value: `${v}`, subtitle: "Current reading" };
   }
@@ -292,6 +302,11 @@ type ReportResult = {
   bearRisk: number;
   bearDangerRating: number;
   bearRiskDetails: string[];
+  terrainDifficultyScore: number;
+  terrainDifficultyLevel: number;
+  terrainElevationDetails: string[];
+  terrainLabel: string;
+  nwsAlertEvents: string[];
   airQualityUnavailable: boolean;
   forecastNotice?: string;
   forecastWindowUsed?: {
@@ -319,28 +334,45 @@ async function generateSafetyReportFromAPI(
     }
 
     const data = await response.json();
-    const { weather, airQuality, airQualityUnavailable, fire, location, forecastNotice, forecastWindowUsed } = data;
+    const {
+      weather, airQuality, airQualityUnavailable, fire, location,
+      forecastNotice, forecastWindowUsed,
+      nwsAlertEvents = [],
+      droughtCategory = 0,
+      floodZone = null,
+      nfdrsErcPercentile = 0,
+      bearObservationCount = 0,
+      bearSightingDetails = [],
+      streamStageRatio = null,
+    } = data;
 
-    // For wildlife, use a simple calculation for now
-    const wildlifeData = { bears: 0 }; // Placeholder, can be expanded later
+    console.log('Location resolved:', { lat: location?.lat, lon: location?.lon, address });
 
-    // Calculate individual risk scores
     const weatherDaily = weather?.daily || {};
     const airHourly = airQuality?.hourly?.us_aqi || [];
 
-    // Use first day for initial assessment; fire proximity uses great-circle distance to campsite
+    // Terrain roughness from 3×3 elevation grid
+    const terrainElevations: number[] = location?.terrainElevations ?? [];
+    const terrainRoughness = calculateTerrainRoughness(terrainElevations);
+    const terrainLabel = terrainRoughnessLabel(terrainRoughness);
+
+
+
     const fireRisk = calculateFireRisk(
       fire,
       weatherDaily,
       startDate,
       endDate,
       location?.lat,
-      location?.lon
+      location?.lon,
+      droughtCategory,
+      nfdrsErcPercentile,
     );
     const airQualityRisk = calculateAirQualityRisk(airHourly);
     const avgAqi = airHourly.length
       ? airHourly.reduce((sum: number, value: number) => sum + value, 0) / airHourly.length
       : 0;
+    // console.log('AQ debug:', { avgAqi, airHourlyLength: airHourly.length, first5: airHourly.slice(0, 5) });
     const airQualityRating = getAirQualityRating(avgAqi);
     const airQualityLabel = getAirQualityLabel(airQualityRating);
     const airQualityDetails = airQualityUnavailable
@@ -356,7 +388,7 @@ async function generateSafetyReportFromAPI(
               ? "Conditions are generally manageable, but monitor updates and reduce prolonged exertion if AQI rises."
               : "Air quality is favorable for most groups, though checking daily updates is still recommended.",
         ];
-    const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate);
+    const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate, nwsAlertEvents, floodZone, streamStageRatio);
     const tripDaysCount =
       Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const weatherCodeWindow = (weatherDaily.weathercode || []).slice(0, tripDaysCount);
@@ -371,11 +403,29 @@ async function generateSafetyReportFromAPI(
     if (snowDays > 0) hazardSignals.push(`${snowDays} day(s) with snow/sleet`);
     if (heavyRainDays > 0) hazardSignals.push(`${heavyRainDays} day(s) with heavy rain`);
     if (extremeWindDays > 0) hazardSignals.push(`${extremeWindDays} day(s) with extreme wind`);
-    const weatherHazardDetails = [
+    const weatherHazardDetails: string[] = [
       hazardSignals.length > 0
         ? `Potential extreme weather signals include ${hazardSignals.join(", ")}.`
         : "No thunderstorms, snow, heavy rain, or extreme wind are currently forecast in your trip window.",
-      "Plan layers, rain protection, and a quick shelter strategy before reaching remote sections.",
+      (() => {
+        const peakTemp = Math.max(...((weatherDaily.temperature_2m_max as number[] | undefined) ?? [20]));
+        const peakPrecip = precipitationWindow.length ? Math.max(...precipitationWindow) : 0;
+        const peakWind = windWindow.length ? Math.max(...windWindow) : 0;
+        if (peakTemp > 35) return "Expect high heat — bring extra water, electrolytes, and shade shelter. Limit strenuous activity during midday hours.";
+        if (peakPrecip > 15) return "Heavy rain is in the forecast — pack waterproof layers, a rain fly, and plan for muddy or flooded trail sections.";
+        if (peakWind > 40 && peakPrecip < 2) return "Strong dry winds are forecast — fire spread potential is elevated. Avoid open fires and have an evacuation plan ready.";
+        if (peakTemp < 5) return "Sub-freezing temperatures are possible — layer aggressively, protect extremities, and keep sleeping insulation dry.";
+        return "Pack a light rain layer and be ready for temperature swings, especially at elevation or overnight.";
+      })(),
+      floodZone
+        ? `Flood zone: ${floodZone}. ${["AE","A","AH","AO","VE","V"].includes(floodZone.toUpperCase()) ? "High-risk zone with a 1% annual flood probability — avoid low-lying ground during rain." : "Lower long-term flood risk for this location."}`
+        : "FEMA flood zone data was unavailable for this location.",
+      ...(streamStageRatio !== null
+        ? [`Nearby USGS stream gauges are at ${Math.round(streamStageRatio * 100)}% of high-water benchmark.`]
+        : []),
+      ...(nwsAlertEvents.some((e: string) => e.toLowerCase().includes("flood"))
+        ? ["Active NWS flood alert in effect — monitor conditions closely."]
+        : []),
     ];
     const startDateObj = new Date(startDate);
     const endDateObj = new Date(endDate);
@@ -385,13 +435,15 @@ async function generateSafetyReportFromAPI(
       seenMonths.add(cur.getMonth() + 1);
       cur.setMonth(cur.getMonth() + 1);
     }
-    const areaElevation = Number(location?.elevation ?? wildlifeData.bears ?? 0);
+    const areaElevation = Number(location?.elevation ?? 0);
     const bearRisk = Math.max(
-      ...Array.from(seenMonths).map((m) => calculateBearRisk(areaElevation, location?.lat || 39, m))
+      ...Array.from(seenMonths).map((m) =>
+        calculateBearRisk(areaElevation, location?.lat || 39, m, bearObservationCount, terrainRoughness)
+      )
     );
     const bearDangerRating = Math.max(
       ...Array.from(seenMonths).map((m) =>
-        getBearDangerRating(areaElevation, location?.lat || 39, m)
+        getBearDangerRating(areaElevation, location?.lat || 39, m, bearObservationCount, terrainRoughness)
       )
     );
     const strongestWind = windWindow.length ? Math.max(...windWindow) : 0;
@@ -412,18 +464,37 @@ async function generateSafetyReportFromAPI(
           ? `${firePointCount} active fire hotspot(s) were observed in the last 5 days. Nearest is about ${kmToMiles(nearestFireKm).toFixed(1)} mi from your campsite, which increases wildfire concern nearby.`
           : `${firePointCount} active fire hotspot(s) were observed in the last 5 days within your search area, increasing wildfire concern nearby.`
         : "No active fire hotspots were observed in the last 5 days in your search area.",
-      `Weather impact: peak wind is ${kmhToMph(strongestWind).toFixed(1)} mph (${windLevel}), and precipitation ranges ${mmToInches(driestDay).toFixed(2)}-${mmToInches(wettestDay).toFixed(2)} in (${precipitationLevel}). Higher wind with lower rainfall increases fire spread potential.`,
+      `Weather impact: peak wind is ${kmhToMph(strongestWind).toFixed(1)} mph (${windLevel})${mmToInches(wettestDay) >= 0.01 ? `, and precipitation ranges ${mmToInches(driestDay).toFixed(2)}–${mmToInches(wettestDay).toFixed(2)} in (${precipitationLevel})` : ', with no precipitation forecast'}. ${wettestDay <= 1 && strongestWind > 15 ? 'Dry and windy conditions increase fire spread potential.' : 'Higher wind with lower rainfall increases fire spread potential.'}`,
+      ...(droughtCategory >= 2 ? [`Drought level D${droughtCategory} detected in this area — dry conditions amplify fire spread risk.`] : []),
+      ...(nfdrsErcPercentile >= 75 ? [`Fire danger index: ERC at the ${Math.round(nfdrsErcPercentile)}th percentile — conditions are drier than ${Math.round(nfdrsErcPercentile)}% of historical readings for this area.`] : []),
     ];
+    const closestSighting = bearSightingDetails[0];
     const bearRiskDetails = [
-      `Your area elevation is ${Math.round(metersToFeet(areaElevation))} ft, and higher elevation areas generally see more bear activity.`,
+      `Your area elevation is ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100). Higher, more rugged terrain generally sees more bear activity.`,
+      bearObservationCount > 0
+        ? `${bearObservationCount} verified bear observation(s) recorded within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}.`
+        : "No recent verified bear observations found within 62 miles via iNaturalist.",
       "Store all food and scented items in bear-proof containers or hang them properly.",
+    ];
+
+    const hasMobilityFlag = groupProfile.medicalConditions.some(
+      (c) => c === 'knee_joints' || c.toLowerCase().includes('mobility') || c.toLowerCase().includes('knee')
+    );
+    const baseTerrainScore = calculateElevationMobilityRisk(areaElevation, terrainRoughness);
+    const terrainDifficultyScore = hasMobilityFlag ? Math.min(100, Math.round(baseTerrainScore * 1.35)) : baseTerrainScore;
+    const terrainDifficultyLevel = Math.max(1, Math.min(5, Math.ceil(terrainDifficultyScore / 20)));
+    const terrainElevationDetails: string[] = [
+      `Elevation: ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100).${areaElevation > 2000 ? " High altitude increases physical effort and acclimatization time." : areaElevation > 1000 ? " Moderate elevation with some stamina demands on trail." : areaElevation < 0 ? " Below sea level — flat terrain with minimal elevation-related exertion." : " Relatively low elevation."}`,
+      ...(bearObservationCount > 0 ? [
+        `🐻 ${bearObservationCount} verified bear observation(s) within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}. Store food in bear-proof containers.`,
+      ] : []),
     ];
 
     const overallSafetyRaw = calculateOverallSafetyScore(
       fireRisk,
       airQualityRisk,
       weatherAlertness,
-      bearRisk
+      bearRisk,
     );
     const maxTemp = (weatherDaily.temperature_2m_max || []).length
       ? Math.max(...weatherDaily.temperature_2m_max)
@@ -449,8 +520,8 @@ async function generateSafetyReportFromAPI(
     const metrics = [
       {
         label: "Fire Risk",
-        value: 100 - adjustedFireRisk, // Invert: lower risk score = higher safety
-        note: "Fire risk index based on hotspot detections from the last 5 days plus forecast conditions.",
+        value: 100 - adjustedFireRisk,
+        note: "Fire risk index based on hotspot detections, drought severity, and NOAA fire weather outlook.",
         icon: "🔥",
       },
       {
@@ -458,17 +529,18 @@ async function generateSafetyReportFromAPI(
         value: 100 - adjustedAirQualityRisk,
         note: `Air quality index today is ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
         icon: "💨",
+        rawAqi: Math.round(avgAqi),
       },
       {
         label: "Weather Alertness",
         value: 100 - adjustedWeatherAlertness,
-        note: "Weather hazard index is calculated from storm codes, heavy precipitation, and extreme winds.",
+        note: "Weather hazard index from storm codes, heavy precipitation, extreme winds, and NWS active alerts.",
         icon: "⛈️",
       },
       {
         label: "Bear Risk",
         value: 100 - bearRisk,
-        note: `Bear activity risk based on wildlife data and season.`,
+        note: "Bear activity risk based on elevation, terrain, season, and recent iNaturalist sightings.",
         icon: "🐻",
       },
     ];
@@ -507,6 +579,11 @@ async function generateSafetyReportFromAPI(
       bearRisk,
       bearDangerRating,
       bearRiskDetails,
+      terrainDifficultyScore,
+      terrainDifficultyLevel,
+      terrainElevationDetails,
+      terrainLabel,
+      nwsAlertEvents,
       airQualityUnavailable: !!airQualityUnavailable,
       forecastNotice,
       forecastWindowUsed,
@@ -659,9 +736,8 @@ export default function Home() {
 
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
-  const bearDangerRating = chartData?.bearDangerRating ?? 1;
-  const isBearExpanded = Boolean(expandedMetric["Bear Risk"]);
-  const wildlifeTone = wildlifeMatrixTone(bearDangerRating);
+  const terrainDifficultyLevel = chartData?.terrainDifficultyLevel ?? 1;
+  const terrainTone = wildlifeMatrixTone(terrainDifficultyLevel);
 
   return (
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
@@ -743,9 +819,9 @@ export default function Home() {
                       </label>
                       {showSuggestions && (
                         <ul className="absolute left-0 right-0 top-full z-50 mt-2 max-h-52 overflow-y-auto rounded-2xl border border-[#eadfcd]/90 bg-[#fffcf9]/95 py-1.5 text-base shadow-lg backdrop-blur-md sm:text-lg">
-                          {suggestions.map((s) => (
+                          {suggestions.map((s, i) => (
                             <li
-                              key={s}
+                              key={i}
                               onMouseDown={() => {
                                 setAddress(s);
                                 setSuggestions([]);
@@ -1106,9 +1182,7 @@ export default function Home() {
                         ? chartData?.fireDetails ?? detailTextByMetric[metric.label] ?? []
                         : metric.label === "Air Quality"
                           ? chartData?.airQualityDetails ?? detailTextByMetric[metric.label] ?? []
-                          : metric.label === "Weather Alertness"
-                            ? chartData?.weatherHazardDetails ?? detailTextByMetric[metric.label] ?? []
-                        : detailTextByMetric[metric.label] ?? [];
+                          : chartData?.weatherHazardDetails ?? detailTextByMetric[metric.label] ?? [];
 
                     return (
                       <article
@@ -1122,11 +1196,7 @@ export default function Home() {
                               ? "Fire Risk Level"
                               : metric.label === "Air Quality"
                                 ? "Air Quality Index"
-                                : metric.label === "Weather Alertness"
-                                  ? "Weather Hazard Index"
-                                  : metric.label === "Bear Risk"
-                                    ? "Bear Risk Level"
-                                    : "Current Temp"}
+                                : "Weather Hazard Index"}
                           </p>
                           {!(metric.label === "Air Quality" && chartData?.airQualityUnavailable) && (
                             <span
@@ -1151,18 +1221,17 @@ export default function Home() {
                             : metric.label === "Air Quality"
                               ? "Trip average air quality"
                               : metric.label === "Weather Alertness"
-                                ? "Based off potential extreme weather events"
-                              : primary.subtitle}
+                                ? "Based off potential extreme weather events, NWS alerts, and flood zone data"
+                                : primary.subtitle}
                         </p>
                         {metric.label === "Fire Risk" && (
                           <div className="mt-2 flex items-center gap-2">
                             {Array.from({ length: 5 }).map((_, idx) => {
-                              const fireLevel = Math.max(1, Math.min(5, Math.round(6 - (metric.value / 100) * 5)));
-                              const active = idx < fireLevel;
+                              const fireLevel = parseInt(primary.value.replace("Risk ", ""), 10);
                               return (
                                 <span
                                   key={idx}
-                                  className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                                  className={`h-2.5 flex-1 rounded-full ${idx < fireLevel ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
                                   aria-hidden
                                 />
                               );
@@ -1176,8 +1245,6 @@ export default function Home() {
                           {metric.label === "Fire Risk"
                             ? ""
                             : metric.label === "Air Quality"
-                            ? ""
-                            : metric.label === "Air Quality" && chartData?.airQualityUnavailable
                             ? ""
                             : metric.label === "Weather Alertness"
                               ? `Hazard score: ${chartData?.weatherHazardScore ?? 0} / 100`
@@ -1220,64 +1287,53 @@ export default function Home() {
                   })}
 
                   <article className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
-                          <span className="mr-1">🐻</span>
-                          Bear Risk Level
-                        </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
+                        <span className="mr-1">🧗</span>
+                        Terrain &amp; Elevation Risk
+                      </p>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${terrainTone.className}`}>
+                        {terrainTone.label}
+                      </span>
+                    </div>
+                    <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                      Difficulty {terrainDifficultyLevel}
+                    </p>
+                    <p className="mt-1 text-sm text-[#6b7078]">
+                      Campground difficulty based on elevation and terrain.{chartData?.terrainLabel ? ` Terrain: ${chartData.terrainLabel}.` : ""}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      {Array.from({ length: 5 }).map((_, idx) => (
                         <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${wildlifeTone.className}`}
-                        >
-                          {wildlifeTone.label}
-                        </span>
-                      </div>
-                      <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
-                        {bearDangerRating} / 5
-                      </p>
-                      <p className="mt-1 text-sm text-[#6b7078]">
-                        Bear danger rating based on elevation, latitude, and seasonality.
-                      </p>
-                      <div className="mt-4 flex items-center gap-2">
-                        {Array.from({ length: 5 }).map((_, idx) => {
-                          const active = idx < bearDangerRating;
-                          return (
-                            <span
-                              key={idx}
-                              className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
-                              aria-hidden
-                            />
-                          );
-                        })}
-                      </div>
-                      <div className="mt-3 text-xs text-[#8b8e94]">
-                        1 = minimal activity, 5 = highest observed bear activity conditions.
-                      </div>
-                      <div className="mt-4">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedMetric((previous) => ({
-                              ...previous,
-                              ["Bear Risk"]: !previous["Bear Risk"],
-                            }))
-                          }
+                          key={idx}
+                          className={`h-2.5 flex-1 rounded-full ${idx < terrainDifficultyLevel ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                          aria-hidden
+                        />
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-[#8b8e94]">1 = flat and easy, 5 = very rugged and challenging.</p>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedMetric((previous) => ({ ...previous, ["Terrain & Elevation"]: !previous["Terrain & Elevation"] }))}
                         className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
-                          aria-expanded={isBearExpanded}
-                          aria-label="Toggle Bear Risk details"
-                        >
-                          {isBearExpanded ? "Hide details" : "Details"}
-                        </button>
+                        aria-expanded={Boolean(expandedMetric["Terrain & Elevation"])}
+                        aria-label="Toggle terrain and elevation details"
+                      >
+                        {expandedMetric["Terrain & Elevation"] ? "Hide details" : "Details"}
+                      </button>
+                    </div>
+                    {expandedMetric["Terrain & Elevation"] && (
+                      <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                        <ul className="list-disc space-y-1 pl-5">
+                          {(chartData?.terrainElevationDetails ?? []).map((detail) => (
+                            <li key={detail}>{detail}</li>
+                          ))}
+                        </ul>
                       </div>
-                      {isBearExpanded && (
-                        <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
-                          <ul className="mt-0 list-disc space-y-1 pl-5">
-                            {(chartData?.bearRiskDetails ?? detailTextByMetric["Bear Risk"] ?? []).map((detail) => (
-                              <li key={detail}>{detail}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                    )}
                   </article>
+
                   </div>
                 </div>
                   </section>
