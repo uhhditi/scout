@@ -1854,7 +1854,7 @@ export default function Home() {
                     <div className="flex items-center justify-between gap-2">
                       <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
                         <span className="mr-1">🧗</span>
-                        Terrain &amp; Elevation Risk
+                        Elevation &amp; Wildlife Risk
                       </p>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${terrainTone.className}`}>
                         {terrainTone.label}
