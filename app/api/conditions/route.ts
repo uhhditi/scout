@@ -161,7 +161,7 @@ export async function GET(request: NextRequest) {
   const weatherUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=weathercode,precipitation_sum,precipitation_probability_max,windspeed_10m_max,temperature_2m_max,uv_index_max` +
-    `&temperature_unit=fahrenheit&timezone=auto&start_date=${formattedStart}&end_date=${formattedEnd}`
+    `&timezone=auto&start_date=${formattedStart}&end_date=${formattedEnd}`
 
   const airQualityUrl =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
@@ -423,8 +423,10 @@ export async function GET(request: NextRequest) {
       gbifBearCount = typeof gbifData?.count === 'number' ? gbifData.count : 0
     } catch { /* ignore */ }
   }
-  // Weight GBIF at ~10% of iNat: 10 GBIF records ≈ 1 iNat observation, capped at 5
-  const totalBearObservations = bearObservationCount + Math.min(5, Math.floor(gbifBearCount / 10))
+  // inatBearCount is the pure iNaturalist count (used for display text)
+  const inatBearCount = bearObservationCount
+  // GBIF adds a background habitat signal — capped at 2 so it can't fake a sighting-rich area
+  const totalBearObservations = bearObservationCount + Math.min(2, Math.floor(gbifBearCount / 10))
 
   return NextResponse.json({
     location: { lat, lon, elevation, terrainElevations },
@@ -437,6 +439,7 @@ export async function GET(request: NextRequest) {
     floodZone,
     nfdrsErcPercentile,
     bearObservationCount: totalBearObservations,
+    inatBearCount,
     bearSightingDetails: bearSightingDetails.slice(0, 5),
     streamStageRatio,
     ...(forecastDateClamped

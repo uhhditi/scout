@@ -235,6 +235,7 @@ export function buildReportResultFromConditionsPayload(
       value: 100 - adjustedWeatherAlertness,
       note: "Weather hazard index is calculated from storm codes, heavy precipitation, and extreme winds.",
       icon: "⛈️",
+      rawPeakTempF: tempsWindow.length ? Math.round(Math.max(...tempsWindow) * 9 / 5 + 32) : undefined,
     },
     {
       label: "Bear Risk",
@@ -251,7 +252,7 @@ export function buildReportResultFromConditionsPayload(
       !missingWeather &&
       (weatherCodeWindow.some((c: number) => rainCodes.has(c)) || precipitationWindow.some((p: number) => p > 1)),
     highFireRisk: fireRisk >= 30,
-    isCold: !missingWeather && (weatherDaily.temperature_2m_max || []).some((t: number) => t < 55),
+    isCold: !missingWeather && (weatherDaily.temperature_2m_max || []).some((t: number) => t < 13),
     isHighAltitude: (location?.elevation ?? 0) > 2500,
     hasThunderstorm: !missingWeather && weatherCodeWindow.some((c: number) => thunderCodes.has(c)),
     highBearRisk: bearDangerRating >= 3,

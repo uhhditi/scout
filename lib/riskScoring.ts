@@ -128,12 +128,14 @@ export function calculateFireRisk(
       ? fireProximityAddFromMinKm(minFireKm, hasFires)
       : fireProximityAddFromMinKm(null, hasFires);
 
+  const densityAdd = points.length >= 15 ? 5 : points.length >= 8 ? 3 : 0;
+
   let maxRisk = 0;
 
   for (let dayIndex = 0; dayIndex < Math.min(days, weatherDaily.weathercode.length); dayIndex++) {
     let score = 5;
 
-    score += fireProximityAdd;
+    score += fireProximityAdd + densityAdd;
 
     const precipitation = weatherDaily.precipitation_sum[dayIndex] || 0;
     if (precipitation < 0.5) score += 12;
@@ -244,7 +246,7 @@ export function calculateWeatherAlertness(
     if ([95, 96, 99].includes(weatherCode)) score += 50;
     else if ([80, 81, 82].includes(weatherCode)) score += 30;
     else if ([51, 53, 55, 61, 63, 65, 66, 67].includes(weatherCode)) score += 15;
-    else if ([71, 73, 75, 77, 85, 86].includes(weatherCode)) score += 35;
+    else if ([71, 73, 75, 77, 85, 86].includes(weatherCode)) score += 25;
 
     if (precipitation > 20) score += 20;
     else if (precipitation > 10) score += 10;
@@ -437,8 +439,8 @@ export function calculateElevationMobilityRisk(elevation: number, terrainRoughne
   let score = 5;
 
   const absElevation = Math.abs(elevation);
-  if (absElevation > 3000) score += 55;
-  else if (absElevation > 2000) score += 35;
+  if (absElevation > 3000) score += 45;
+  else if (absElevation > 2000) score += 30;
   else if (absElevation > 1000) score += 20;
   else if (absElevation > 500) score += 10;
 
@@ -480,7 +482,7 @@ export function calculateOverallSafetyScore(
     bearSafety * 0.13;
 
   const worstSafety = Math.min(fireSafety, weatherSafety, airSafety, bearSafety);
-  const floored = Math.min(weighted, worstSafety + 15);
+  const floored = Math.min(weighted, worstSafety * 1.3 + 20);
 
   return Math.round(floored) / 10;
 }

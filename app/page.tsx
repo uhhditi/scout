@@ -310,7 +310,7 @@ function metricSecondary(metric: SafetyMetric) {
     case "Fire Risk": {
       const level = v >= 80 ? 1 : v >= 55 ? 2 : v >= 35 ? 3 : v >= 18 ? 4 : 5;
       const pill =
-        level <= 2 ? "Low" : level === 3 ? "Moderate" : level === 4 ? "High" : "Severe";
+        level === 1 ? "Low" : level === 2 ? "Moderate" : level === 3 ? "Elevated" : level === 4 ? "High" : "Severe";
       return { line: "", pill };
     }
     case "Air Quality": {
@@ -544,6 +544,7 @@ async function generateSafetyReportFromAPI(
       floodZone = null,
       nfdrsErcPercentile = 0,
       bearObservationCount = 0,
+      inatBearCount = 0,
       bearSightingDetails = [],
       streamStageRatio = null,
     } = data;
@@ -673,8 +674,8 @@ async function generateSafetyReportFromAPI(
     const closestSighting = bearSightingDetails[0];
     const bearRiskDetails = [
       `Your area elevation is ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100). Higher, more rugged terrain generally sees more bear activity.`,
-      bearObservationCount > 0
-        ? `${bearObservationCount} verified bear observation(s) recorded within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}.`
+      inatBearCount > 0
+        ? `${inatBearCount} verified bear observation(s) recorded within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}.`
         : "No recent verified bear observations found within 62 miles via iNaturalist.",
       "Store all food and scented items in bear-proof containers or hang them properly.",
     ];
@@ -687,8 +688,8 @@ async function generateSafetyReportFromAPI(
     const terrainDifficultyLevel = Math.max(1, Math.min(5, Math.ceil(terrainDifficultyScore / 20)));
     const terrainElevationDetails: string[] = [
       `Elevation: ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100).${areaElevation > 2000 ? " High altitude increases physical effort and acclimatization time." : areaElevation > 1000 ? " Moderate elevation with some stamina demands on trail." : areaElevation < 0 ? " Below sea level — flat terrain with minimal elevation-related exertion." : " Relatively low elevation."}`,
-      ...(bearObservationCount > 0 ? [
-        `🐻 ${bearObservationCount} verified bear observation(s) within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}. Store food in bear-proof containers.`,
+      ...(inatBearCount > 0 ? [
+        `🐻 ${inatBearCount} verified bear observation(s) within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}. Store food in bear-proof containers.`,
       ] : []),
     ];
 
@@ -1081,9 +1082,9 @@ export default function Home() {
 
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
-  const overallVerdict = overallTripVerdict(normalizedOverallScore);
   const terrainDifficultyLevel = chartData?.terrainDifficultyLevel ?? 1;
   const terrainTone = wildlifeMatrixTone(terrainDifficultyLevel);
+  const overallVerdict = overallTripVerdict(normalizedOverallScore);
   const keepInMind = buildKeepInMindItems(chartData, terrainDifficultyLevel);
 
   return (
@@ -1911,6 +1912,15 @@ export default function Home() {
                         {metric.label === "Fire Risk" && (
                           <p className="mt-2 text-xs text-[#8b8e94]">1 = little to no risk, 5 = high wildfire risk.</p>
                         )}
+                        <p className="mt-2 text-xs text-[#8b8e94]">
+                          {metric.label === "Fire Risk"
+                            ? ""
+                            : metric.label === "Air Quality"
+                            ? ""
+                            : metric.label === "Weather Alertness"
+                              ? ""
+                              : secondary.line}
+                        </p>
                         <div className="mt-4">
                           <button
                             type="button"
@@ -1928,7 +1938,7 @@ export default function Home() {
                           </button>
                         </div>
                         {isExpanded && (
-                          <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                          <div className="mt-3 border-t border-[#d9dde3] pt-2.5 text-sm text-[#374151]">
                             {metric.label === "Air Quality" ? (
                               <p>
                                 Air forecast data is typically available and most accurate for up to about 5 days from today.
