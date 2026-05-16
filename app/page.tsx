@@ -223,6 +223,87 @@ function overallPill(score: number) {
   return { label: "ELEVATED", className: "bg-red-100 text-red-700 ring-1 ring-red-200" };
 }
 
+function overallTripVerdict(score: number) {
+  if (score > 6.5) {
+    return { headline: "Looking good — happy camping! 🏕️", className: "text-emerald-800" };
+  }
+  if (score >= 4.5) {
+    return { headline: "We recommend proceeding with caution", className: "text-amber-800" };
+  }
+  return { headline: "We recommend judgement call day-of", className: "text-orange-800" };
+}
+
+function buildKeepInMindItems(
+  data: Omit<TripReportResult, "report"> | null,
+  terrainLevel: number
+): string[] {
+  if (!data) return [];
+
+  const items: string[] = [];
+  const ctx = data.weatherCtx;
+  const bearLevel = data.bearDangerRating ?? 1;
+  const terrain = terrainLevel;
+
+  if (data.fireRisk >= 55) {
+    items.push("Wildfire risk is elevated. Check closures and have a backup route.");
+  } else if (data.fireRisk >= 30) {
+    items.push("Some wildfire concern nearby. Monitor official fire maps before you leave.");
+  }
+
+  if (data.airQualityUnavailable) {
+    items.push("Air quality forecast was unavailable. Check local AQI closer to departure.");
+  } else if (data.airRisk >= 45 || /unhealthy/i.test(data.airQualityLabel)) {
+    items.push("Air quality may be poor. Consider masks if anyone has asthma or respiratory sensitivity.");
+  } else if (data.airRisk >= 25) {
+    items.push("Moderate air quality is possible. Worth a quick check before you head out.");
+  }
+
+  if (data.weatherHazardScore >= 60) {
+    items.push(
+      `Significant weather hazards (${data.weatherHazardLabel.toLowerCase()}). Plan for storms, wind, or flooding.`
+    );
+  } else if (data.weatherHazardScore >= 40 || ctx?.hasRain) {
+    items.push("Rain or unsettled weather in the forecast. Pack waterproof layers and watch trail conditions.");
+  }
+  if (ctx?.hasThunderstorm) {
+    items.push("Thunderstorms possible. Avoid exposed ridges and plan around afternoon storms.");
+  }
+  if (data.nwsAlertEvents.length > 0) {
+    const preview = data.nwsAlertEvents.slice(0, 2).join("; ");
+    items.push(
+      `Active NWS alert${data.nwsAlertEvents.length > 1 ? "s" : ""}: ${preview}${data.nwsAlertEvents.length > 2 ? "…" : ""}.`
+    );
+  }
+
+  if (bearLevel >= 4) {
+    items.push("High bear activity expected. Use strict food storage and bear-aware travel habits.");
+  } else if (bearLevel >= 3) {
+    items.push("Bear activity is notable for this area and season. Use bear boxes and make noise on trail.");
+  } else if (bearLevel >= 2) {
+    items.push("Wildlife is present. Store scented items properly and follow local food-storage rules.");
+  }
+
+  if (terrain >= 4) {
+    items.push(
+      `Terrain is challenging${data.terrainLabel ? ` (${data.terrainLabel.toLowerCase()})` : ""}. Pace yourself and plan for elevation gain.`
+    );
+  } else if (terrain >= 3) {
+    items.push("Moderate elevation and terrain. Allow extra time and bring sturdy footwear.");
+  } else if (ctx?.isHighAltitude) {
+    items.push("Higher elevation. Hydrate well and watch for altitude symptoms.");
+  }
+
+  if (ctx?.isCold) {
+    items.push("Cold temperatures possible. Layer up and keep sleeping insulation dry.");
+  }
+
+  if (items.length === 0) {
+    items.push("Conditions look relatively calm. Still check forecasts and local advisories the day you leave.");
+  }
+
+  return items.slice(0, 6);
+}
+
 function metricSecondary(metric: SafetyMetric) {
   const v = metric.value;
   switch (metric.label) {
@@ -1000,8 +1081,10 @@ export default function Home() {
 
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
+  const overallVerdict = overallTripVerdict(normalizedOverallScore);
   const terrainDifficultyLevel = chartData?.terrainDifficultyLevel ?? 1;
   const terrainTone = wildlifeMatrixTone(terrainDifficultyLevel);
+  const keepInMind = buildKeepInMindItems(chartData, terrainDifficultyLevel);
 
   return (
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
@@ -1701,9 +1784,32 @@ export default function Home() {
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1.5 text-center text-xs font-semibold text-[#2d2926] sm:text-left">
-                      10 is very safe, 1 is dangerous.
+                    <p className="mt-1.5 text-center text-xs font-medium text-[#8b8e94] sm:text-left">
+                      10 is considered safer; 1 is more dangerous.
                     </p>
+                    <div className="mt-3 space-y-2.5">
+                      <p
+                        className={`text-center font-display text-sm font-bold leading-snug sm:text-left ${overallVerdict.className}`}
+                      >
+                        {overallVerdict.headline}
+                      </p>
+                      {keepInMind.length > 0 ? (
+                        <div>
+                          <p className="text-center text-[11px] font-bold uppercase tracking-wide text-[#4a3426] sm:text-left">
+                            Things to keep in mind
+                          </p>
+                          <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs leading-snug text-[#4a3426] sm:pl-5">
+                            {keepInMind.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      <p className="text-center text-[11px] leading-snug text-[#6b6560] sm:text-left">
+                        Scout scores are approximations based on real-time data. Please check conditions yourself
+                        before heading out.
+                      </p>
+                    </div>
                   </div>
                   <div className="mt-4 flex items-center justify-center">
                     <div className="relative h-24 w-24">
