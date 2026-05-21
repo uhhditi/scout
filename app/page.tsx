@@ -857,6 +857,11 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!report) return;
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [reportView, report]);
+
   const loadCampgroundsFromScout = async (tripReport: SafetyReport) => {
     const trimmed = address.trim();
     const tripSafetyScore =
@@ -1091,7 +1096,7 @@ export default function Home() {
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
       <div className="scout-main-bg relative min-h-screen">
         <div
-          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "py-12 lg:py-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
+          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "pb-10 pt-0 sm:pb-12 lg:pb-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
         >
           {!report && (
             <header className="text-center">
@@ -1121,6 +1126,12 @@ export default function Home() {
                   aria-hidden
                 />
               </div>
+              {wizardStep === 0 ? (
+                <p className="font-display mx-auto mt-4 max-w-xl px-2 text-sm font-medium leading-relaxed text-[#888780] sm:mt-5 sm:text-base">
+                  Enter your trip details and get a personalized safety score, packing list, and campsite
+                  recommendations.
+                </p>
+              ) : null}
             </header>
           )}
 
@@ -1131,11 +1142,13 @@ export default function Home() {
               aria-label="Trip planner"
             >
               <div className="w-full max-w-2xl space-y-10 text-center sm:space-y-12">
-                <div className="space-y-4">
-                  <p className="text-[clamp(1.05rem,3.25vw,1.55rem)] font-extrabold tracking-tight text-[#1a1c1e] sm:text-[clamp(1.1rem,2.75vw,1.65rem)]">
-                    Welcome Camper!
-                  </p>
-                  <div className="flex justify-center gap-2.5 pt-1" aria-hidden>
+                <div className={wizardStep === 0 ? "space-y-4" : ""}>
+                  {wizardStep === 0 ? (
+                    <p className="text-[clamp(1.05rem,3.25vw,1.55rem)] font-extrabold tracking-tight text-[#1a1c1e] sm:text-[clamp(1.1rem,2.75vw,1.65rem)]">
+                      Welcome Camper!
+                    </p>
+                  ) : null}
+                  <div className={`flex justify-center gap-2.5 ${wizardStep === 0 ? "pt-1" : ""}`} aria-hidden>
                     {[0, 1, 2, 3].map((i) => (
                       <span
                         key={i}
@@ -1216,7 +1229,7 @@ export default function Home() {
                       }}
                       maxOffsetFromToday={15}
                     />
-                    <p className="text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
+                    <p className="font-display text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
                       Forecast-based scoring is strongest within the next week; the calendar only shows the next 16
                       days (today plus 15).
                     </p>
@@ -1391,29 +1404,36 @@ export default function Home() {
           )}
 
           {report && (
-            <section className="mt-0 pt-16">
-              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 py-5 text-[#f5f0e8] sm:px-6 lg:px-8">
-                <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center justify-start gap-1 sm:gap-2">
+            <section className="scout-report-section mt-0">
+              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top,0px))] text-[#f5f0e8] sm:px-6 sm:py-3.5 lg:px-8">
+                <div className="mx-auto flex max-w-7xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                  <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
                     <button
                       type="button"
                       onClick={() => setReportView("main")}
-                      className="flex items-center gap-1 rounded-lg px-1 py-0.5 text-left transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E8600A] sm:gap-2"
+                      className="flex min-w-0 items-center gap-1 rounded-lg px-1 py-0.5 text-left transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E8600A] sm:gap-2"
                       aria-label="Go to trip dashboard"
                     >
                       <span className="text-2xl sm:text-3xl" aria-hidden>
                         ⛺️
                       </span>
-                      <span className="font-display text-2xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
+                      <span className="font-display truncate text-xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
                         Scout
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={resetTripPlanner}
+                      className="shrink-0 rounded-2xl bg-[#E8600A] px-3.5 py-1.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:hidden"
+                    >
+                      New trip
+                    </button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-5 sm:justify-end">
+                  <div className="-mx-4 flex min-w-0 items-center gap-4 overflow-x-auto overscroll-x-contain px-4 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:justify-end sm:gap-5 sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden">
                     <button
                       type="button"
                       onClick={() => setReportView("main")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "main"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1424,7 +1444,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setReportView("packing")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "packing"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1435,7 +1455,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setReportView("bookings")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "bookings"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1446,7 +1466,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={resetTripPlanner}
-                      className="rounded-[20px] bg-[#E8600A] px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-110"
+                      className="hidden shrink-0 rounded-[20px] bg-[#E8600A] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:inline-flex"
                     >
                       Plan another trip
                     </button>
@@ -1455,7 +1475,7 @@ export default function Home() {
               </nav>
 
               {reportView === "packing" ? (
-                <div className="mx-auto mt-6 w-full max-w-7xl space-y-5 px-4 sm:px-6 lg:px-8">
+                <div className="mx-auto mt-4 w-full max-w-7xl space-y-5 px-4 sm:mt-6 sm:px-6 lg:px-8">
                   {checklist && checklist.length > 0 ? (
                     <GearChecklist sections={checklist} />
                   ) : (
@@ -1463,7 +1483,7 @@ export default function Home() {
                   )}
                 </div>
               ) : reportView === "bookings" ? (
-                <div className="mx-auto mt-6 w-full max-w-7xl space-y-5 px-4 sm:px-6 lg:px-8">
+                <div className="mx-auto mt-4 w-full max-w-7xl space-y-5 px-4 sm:mt-6 sm:px-6 lg:px-8">
                   <header className="border-b border-[#eadfcd] border-l-4 border-l-[#ea8a12] pb-5 pl-5 text-left sm:pl-6">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-8 lg:gap-10">
                       <div className="min-w-0 flex-1 space-y-2">
@@ -1690,7 +1710,7 @@ export default function Home() {
                       {chartData.conditionsNotice}
                     </div>
                   ) : null}
-                  <div className={chartData?.conditionsNotice ? "mt-6" : "mt-5"}>
+                  <div className={chartData?.conditionsNotice ? "mt-4 sm:mt-6" : "mt-4 sm:mt-5"}>
                     <header className="border-b border-[#eadfcd] border-l-4 border-l-[#ea8a12] pb-5 pl-4 text-left sm:pl-5">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
                         <div className="min-w-0 flex-1 space-y-2">
