@@ -803,7 +803,8 @@ type CampgroundSearchRow = {
   amenityMatchScore: number;
   highlights: string[];
   bookUrl: string;
-  snippet: string;
+  overviewBlurb: string;
+  ridbAmenityTags: string[];
   imageUrl: string | null;
   safetyScore: number;
   safetyScoreUsesTripOrigin: boolean;
@@ -912,7 +913,10 @@ export default function Home() {
           amenityMatchScore: typeof r.amenityMatchScore === "number" ? r.amenityMatchScore : 0,
           highlights: Array.isArray(r.highlights) ? (r.highlights as string[]) : [],
           bookUrl: String(r.bookUrl ?? "#"),
-          snippet: String(r.snippet ?? ""),
+          overviewBlurb: String(r.overviewBlurb ?? ""),
+          ridbAmenityTags: Array.isArray(r.ridbAmenityTags)
+            ? (r.ridbAmenityTags as string[]).filter((t) => typeof t === "string")
+            : [],
           imageUrl: typeof r.imageUrl === "string" ? r.imageUrl : null,
           safetyScore:
             typeof r.safetyScore === "number" && Number.isFinite(r.safetyScore)
@@ -1590,16 +1594,23 @@ export default function Home() {
                                       ~{row.distanceMiles} mi away
                                     </p>
 
-                                    {row.highlights.length > 0 ? (
-                                      <div className="mt-2 flex flex-wrap gap-2 sm:gap-2.5">
-                                        {uniqueAmenityTags(row.highlights, 6).map((tag) => (
-                                          <span
-                                            key={`${row.facilityId}-${tag}`}
-                                            className="inline-flex items-center gap-1 rounded-full border border-[#f0d5b1] bg-[#fff7ec] px-2.5 py-1 text-xs font-semibold text-[#7a5c2e] sm:px-3 sm:py-1.5 sm:text-sm"
-                                          >
-                                            {tag}
-                                          </span>
-                                        ))}
+                                    {row.ridbAmenityTags.length > 0 ||
+                                    row.highlights.some(
+                                      (h) => h.includes("restriction") && (h.includes("pet") || h.includes("dog"))
+                                    ) ? (
+                                      <div className="mt-2 space-y-1.5">
+                                        {row.ridbAmenityTags.length > 0 ? (
+                                          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                                            {row.ridbAmenityTags.map((tag) => (
+                                              <span
+                                                key={`${row.facilityId}-${tag}`}
+                                                className="inline-flex items-center gap-1 rounded-full border border-[#e8dcc8] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#5c534c] sm:px-2.5 sm:py-1 sm:text-xs"
+                                              >
+                                                {tag}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
                                         {row.highlights.some(
                                           (h) =>
                                             h.includes("restriction") && (h.includes("pet") || h.includes("dog"))
@@ -1609,6 +1620,12 @@ export default function Home() {
                                           </span>
                                         ) : null}
                                       </div>
+                                    ) : null}
+
+                                    {row.overviewBlurb ? (
+                                      <p className="mt-2 text-xs leading-relaxed text-[#5c534c] sm:text-sm">
+                                        {row.overviewBlurb}
+                                      </p>
                                     ) : null}
                                   </div>
 

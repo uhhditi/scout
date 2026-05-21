@@ -8,6 +8,7 @@ import { normalizeCampgroundDisplayName } from "@/lib/normalizeCampgroundDisplay
 import { fetchConditionsPayload } from "@/lib/fetchConditionsPayload";
 import { buildReportResultFromConditionsPayload } from "@/lib/tripReportFromConditionsPayload";
 import { groupProfileFromWizardSelections } from "@/lib/groupProfileFromWizard";
+import { extractOverviewBlurb, extractRidbAmenityTagsFromFacility } from "@/lib/extractRidbAmenityTags";
 
 export const maxDuration = 60;
 
@@ -19,16 +20,6 @@ type CampgroundsBody = {
   companions?: string[];
   healthConcerns?: string[];
   tripSafetyScore?: number;
-};
-
-type SiteStructuredData = {
-  hasAccessibleSite: boolean;
-  hasRvAccess: boolean;
-  maxRvLength: number | null;
-  hasTents: boolean;
-  siteCount: number;
-  closureNotice: string | null;
-  attrText: string;
 };
 
 function ridbFacilityCoords(f: Record<string, unknown>): { lat: number; lon: number } | null {
@@ -76,90 +67,6 @@ function blendedRankScore(
   const distanceNorm = 1 - Math.min(distanceMiles / maxSearchRadius, 1);
   // Safety 40% · proximity 40% · amenity fit 20%
   return safetyNorm * 0.40 + distanceNorm * 0.40 + amenityNorm * 0.20;
-}
-
-async function fetchSiteStructuredData(
-  facilityId: string,
-  apiKey: string,
-  limiter: { acquire: () => Promise<void> }
-): Promise<SiteStructuredData> {
-  const fallback: SiteStructuredData = {
-    hasAccessibleSite: false,
-    hasRvAccess: false,
-    maxRvLength: null,
-    hasTents: false,
-    siteCount: 0,
-    closureNotice: null,
-    attrText: "",
-  };
-
-  try {
-    const url = new URL("https://ridb.recreation.gov/api/v1/campsites");
-    url.searchParams.set("facility_id", facilityId);
-    url.searchParams.set("limit", "20");
-
-    await limiter.acquire();
-    const res = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        apikey: apiKey,
-        "User-Agent": "scout-app/1.0 (campsite detail)",
-      },
-    });
-
-    if (!res.ok) return fallback;
-
-    const json = (await res.json()) as { RECDATA?: Record<string, unknown>[] };
-    const sites = Array.isArray(json.RECDATA) ? json.RECDATA : [];
-    if (sites.length === 0) return fallback;
-
-    let hasAccessibleSite = false;
-    let hasRvAccess = false;
-    let maxRvLength: number | null = null;
-    let hasTents = false;
-    let closureNotice: string | null = null;
-    const allAttrText: string[] = [];
-
-    for (const site of sites) {
-      if (site.CampsiteAccessible === true) hasAccessibleSite = true;
-
-      if (Array.isArray(site.PERMITTEDEQUIPMENT)) {
-        for (const eq of site.PERMITTEDEQUIPMENT as { EquipmentName?: string; MaxLength?: number }[]) {
-          const name = (eq.EquipmentName ?? "").toLowerCase();
-          if (name.includes("rv") || name.includes("trailer") || name.includes("motorhome")) {
-            hasRvAccess = true;
-            if (typeof eq.MaxLength === "number" && (maxRvLength === null || eq.MaxLength > maxRvLength)) {
-              maxRvLength = eq.MaxLength;
-            }
-          }
-          if (name.includes("tent")) hasTents = true;
-        }
-      }
-
-      if (Array.isArray(site.ATTRIBUTES)) {
-        for (const attr of site.ATTRIBUTES as { AttributeName?: string; AttributeValue?: string }[]) {
-          const attrName = (attr.AttributeName ?? "").toLowerCase();
-          const attrVal = attr.AttributeValue ?? "";
-          // Collect meaningful attribute text for amenity scoring
-          if (attrVal && attrVal !== "N/A" && attrVal !== "0" && attrVal.toLowerCase() !== "false") {
-            allAttrText.push(`${attr.AttributeName}: ${attrVal}`);
-          }
-          // Check for closure
-          if (!closureNotice && (
-            attrName.includes("closure") ||
-            (attrName.includes("status") && attrVal.toLowerCase().includes("closed"))
-          )) {
-            closureNotice = `${attr.AttributeName}: ${attrVal}`;
-          }
-        }
-      }
-    }
-
-    const attrText = [...new Set(allAttrText)].join(", ");
-    return { hasAccessibleSite, hasRvAccess, maxRvLength, hasTents, siteCount: sites.length, closureNotice, attrText };
-  } catch {
-    return fallback;
-  }
 }
 
 const MAX_LISTED = 5;
@@ -255,8 +162,8 @@ export async function POST(request: NextRequest) {
   const candidates = rawList
     .map((f) => {
       if (isExplicitlyNonReservable(f.Reservable)) return null;
-      const desc = String(f.FacilityDescription ?? "");
-      if (facilityDescriptionLooksClosed(desc)) return null;
+      const descHtml = String(f.FacilityDescription ?? "");
+      if (facilityDescriptionLooksClosed(descHtml)) return null;
       const coords = ridbFacilityCoords(f);
       if (!coords) return null;
       const dMi = haversineMiles(originLat, originLon, coords.lat, coords.lon);
@@ -267,7 +174,7 @@ export async function POST(request: NextRequest) {
             .map((a) => `${String(a.AttributeName ?? "")}: ${String(a.AttributeValue ?? "")}`)
             .join(", ")
         : "";
-      const amenityBlob = [name, desc, keywords, attrs].filter(Boolean).join(" · ");
+      const amenityBlob = [name, descHtml, keywords, attrs].filter(Boolean).join(" · ");
       const id = String(f.FacilityID ?? f.LegacyFacilityID ?? "");
       if (!id) return null;
       const { highlights, amenityMatchScore } = scoreCampgroundAmenityFit({
@@ -275,8 +182,18 @@ export async function POST(request: NextRequest) {
         companions,
         healthConcerns,
       });
-      const snippet = amenityBlob.length > 240 ? `${amenityBlob.slice(0, 237)}…` : amenityBlob;
-      return { id, name, lat: coords.lat, lon: coords.lon, dMi, amenityBlob, amenityMatchScore, highlights, snippet };
+      const overviewBlurb = extractOverviewBlurb(descHtml);
+      return {
+        id,
+        name,
+        lat: coords.lat,
+        lon: coords.lon,
+        dMi,
+        amenityBlob,
+        amenityMatchScore,
+        highlights,
+        overviewBlurb,
+      };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => {
@@ -342,22 +259,19 @@ export async function POST(request: NextRequest) {
     }))
     .sort((a, b) => b.rankScore - a.rankScore);
 
-  // ── Pass 4: fetch image + site data for final 5 in parallel ─────────────
+  // ── Pass 4: fetch images for final 5 in parallel ────────────────────────
   const results = (
     await Promise.all(
       reranked.map(async (row) => {
-        const [siteData, imageUrl] = await Promise.all([
-          fetchSiteStructuredData(row.id, apiKey, limiter),
-          fetchRidbFacilityImageUrl(row.id, apiKey, limiter),
-        ]);
+        const imageUrl = await fetchRidbFacilityImageUrl(row.id, apiKey, limiter);
 
-        // Rescore amenities now that we have site-level attribute text
-        const enrichedAmenityText = [row.amenityBlob, siteData.attrText].filter(Boolean).join(" · ");
         const { highlights: enrichedHighlights, amenityMatchScore: enrichedAmenityScore } = scoreCampgroundAmenityFit({
-          amenityText: enrichedAmenityText,
+          amenityText: row.amenityBlob,
           companions,
           healthConcerns,
         });
+
+        const ridbAmenityTags = extractRidbAmenityTagsFromFacility(row.amenityBlob);
 
         return {
           facilityId: row.id,
@@ -368,17 +282,13 @@ export async function POST(request: NextRequest) {
           amenityMatchScore: enrichedAmenityScore,
           highlights: enrichedHighlights,
           bookUrl: `https://www.recreation.gov/camping/campgrounds/${encodeURIComponent(row.id)}`,
-          snippet: row.snippet,
+          overviewBlurb: row.overviewBlurb,
+          ridbAmenityTags,
           imageUrl,
           safetyScore: row.safetyScore,
           safetyScoreUsesTripOrigin: row.safetyScoreUsesTripOrigin,
           safetyScoreFallback: row.safetyScoreFallback,
           rankScore: Math.round(row.rankScore * 1000) / 1000,
-          hasAccessibleSite: siteData.hasAccessibleSite,
-          hasRvAccess: siteData.hasRvAccess,
-          maxRvLength: siteData.maxRvLength,
-          hasTents: siteData.hasTents,
-          siteCount: siteData.siteCount,
         };
       })
     )
