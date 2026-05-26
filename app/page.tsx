@@ -2064,7 +2064,7 @@ export default function Home() {
                       You&apos;ve reviewed your safety breakdown. Finish planning with packing, then lock in a site
                       while availability is best.
                     </p>
-                    <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-5 shadow-sm sm:min-h-[220px] sm:p-6">
                         <div>
                           <div className="flex items-center gap-2">
@@ -2105,6 +2105,27 @@ export default function Home() {
                         >
                           View site recommendations
                         </button>
+                      </article>
+                      <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-5 shadow-sm sm:min-h-[220px] sm:p-6">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#ea8a12] text-sm font-extrabold text-white">
+                              3
+                            </span>
+                            <p className="font-display text-lg font-bold text-[#1a1c1e] sm:text-xl">Fill feedback form</p>
+                          </div>
+                          <p className="mt-3 text-sm leading-relaxed text-[#5f5450] sm:text-base">
+                            Help us improve Scout — share what worked, what didn&apos;t, and what you&apos;d love to see next.
+                          </p>
+                        </div>
+                        <a
+                          href="https://forms.gle/Wcg4ed36ui4y3h9v5"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base text-center block"
+                        >
+                          Fill out feedback form
+                        </a>
                       </article>
                     </div>
                   </section>
