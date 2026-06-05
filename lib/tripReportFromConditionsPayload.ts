@@ -52,6 +52,7 @@ export type TripReportResult = {
     endDate: string;
   };
   weatherCtx: WeatherContext;
+  forecastLocation: { lat: number; lon: number } | null;
 };
 
 /**
@@ -300,5 +301,12 @@ export function buildReportResultFromConditionsPayload(
     forecastNotice,
     forecastWindowUsed,
     weatherCtx,
+    forecastLocation:
+      typeof location?.lat === "number" &&
+      typeof location?.lon === "number" &&
+      Number.isFinite(location.lat) &&
+      Number.isFinite(location.lon)
+        ? { lat: location.lat, lon: location.lon }
+        : null,
   };
 }

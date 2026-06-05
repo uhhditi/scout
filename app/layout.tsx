@@ -9,9 +9,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Scout | Campfire Safety Dashboard",
+  title: "Scout | Campfire Risk Dashboard",
   description:
-    "Plan safer trail and campsite visits with a generated safety score.",
+    "Plan trail and campsite visits with a generated risk score.",
 };
 
 export default function RootLayout({

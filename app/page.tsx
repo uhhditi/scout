@@ -29,6 +29,7 @@ import {
   type TripReportResult,
 } from "@/lib/tripReportFromConditionsPayload";
 import { groupProfileFromWizardSelections } from "@/lib/groupProfileFromWizard";
+import { buildNwsForecastUrl } from "@/lib/nwsForecastUrl";
 
 function parseLocalYMD(ymd: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
@@ -514,6 +515,7 @@ function buildDegradedReportResult(
     conditionsNotice,
     dataSummaryIncomplete: true,
     weatherCtx,
+    forecastLocation: null,
   };
 }
 
@@ -790,6 +792,13 @@ async function generateSafetyReportFromAPI(
       forecastNotice,
       forecastWindowUsed,
       weatherCtx,
+      forecastLocation:
+        typeof location?.lat === "number" &&
+        typeof location?.lon === "number" &&
+        Number.isFinite(location.lat) &&
+        Number.isFinite(location.lon)
+          ? { lat: location.lat, lon: location.lon }
+          : null,
     };
   } catch (error) {
     throw error;
@@ -1131,7 +1140,7 @@ export default function Home() {
               </div>
               {wizardStep === 0 ? (
                 <p className="font-display mx-auto mt-4 max-w-xl px-2 text-sm font-medium leading-relaxed text-[#888780] sm:mt-5 sm:text-base">
-                  Enter your trip details and get a personalized safety score, packing list, and campsite
+                  Enter your trip details and get a personalized risk score, packing list, and campsite
                   recommendations.
                 </p>
               ) : null}
@@ -1497,14 +1506,14 @@ export default function Home() {
                           Book a site
                         </h2>
                         <p className="pt-1 text-sm leading-snug text-[#5c534c] sm:text-[0.9375rem] lg:text-base">
-                          Recommendations are tailored to your trip details, companions, and safety profile, then ordered by
+                          Recommendations are tailored to your trip details, companions, and risk profile, then ordered by
                           amenity and fit. Always confirm dates and availability on Recreation.gov before you book.
                         </p>
                       </div>
                       {report ? (
                         <div className="shrink-0 border-t border-[#eadfcd] pt-4 sm:border-t-0 sm:pt-0 sm:text-right">
                           <p className="text-[0.65rem] font-bold uppercase tracking-[0.22em] text-[#ea8a12] sm:text-xs">
-                            Your trip score
+                            Your risk score
                           </p>
                           <div className="mt-1 flex flex-wrap items-end gap-2 sm:justify-end">
                             <p className="font-display text-3xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-4xl">
@@ -1631,7 +1640,7 @@ export default function Home() {
 
                                   <div className="flex w-full shrink-0 flex-col items-center gap-2 sm:ml-auto sm:w-max">
                                     <p className="text-center text-[10px] font-bold uppercase tracking-wide text-[#8b8e94] sm:text-xs">
-                                      Safety score
+                                      Risk score
                                     </p>
                                     <div className="relative h-24 w-24 sm:h-28 sm:w-28">
                                       <svg
@@ -1674,7 +1683,7 @@ export default function Home() {
                                         {row.safetyScoreUsesTripOrigin ? (
                                           <span>(same area as your trip)</span>
                                         ) : (
-                                          <span>(conditions unavailable; trip score shown)</span>
+                                          <span>(conditions unavailable; trip risk score shown)</span>
                                         )}
                                       </p>
                                     ) : null}
@@ -1800,13 +1809,13 @@ export default function Home() {
                   </div>
                   <section className="mt-5">
                     <h3 className="font-display border-b-2 border-[#ea8a12] pb-1.5 text-left text-lg font-extrabold tracking-tight text-[#1a1c1e] sm:text-xl">
-                      Safety Breakdown
+                      Risk Breakdown
                     </h3>
                     <div className="mt-3 flex flex-col gap-2.5 xl:flex-row xl:items-stretch xl:gap-2.5">
                 <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-3 shadow-sm ring-1 ring-[#f7d6ab] sm:p-4 xl:w-[260px] xl:self-stretch">
                   <div>
                     <p className="font-display inline-block text-base font-bold text-[#4a3426]">
-                      Overall Safety Score
+                      Overall Risk Score
                     </p>
                     <div className="mt-2 flex flex-wrap items-end justify-center gap-2 sm:justify-start">
                       <p className="font-display text-3xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-4xl">
@@ -1822,7 +1831,7 @@ export default function Home() {
                       ) : null}
                     </div>
                     <p className="mt-1.5 text-center text-xs font-medium text-[#8b8e94] sm:text-left">
-                      10 is considered safer; 1 is more dangerous.
+                      10 is lower risk; 1 is higher risk.
                     </p>
                     <div className="mt-3 space-y-2.5">
                       <p
@@ -1977,6 +1986,21 @@ export default function Home() {
                               {details.map((detail) => (
                                 <li key={detail}>{detail}</li>
                               ))}
+                              {metric.label === "Weather Alertness" && chartData?.forecastLocation ? (
+                                <li>
+                                  <a
+                                    href={buildNwsForecastUrl(
+                                      chartData.forecastLocation.lat,
+                                      chartData.forecastLocation.lon
+                                    )}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-[#b45309] underline decoration-[#d4c4b0] underline-offset-2 hover:text-[#ea8a12]"
+                                  >
+                                    View current NOAA forecast on weather.gov
+                                  </a>
+                                </li>
+                              ) : null}
                             </ul>
                           </div>
                         )}
@@ -2044,7 +2068,7 @@ export default function Home() {
                       What&apos;s Next?
                     </h3>
                     <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[#6b7078] sm:text-base">
-                      You&apos;ve reviewed your safety breakdown. Finish planning with packing, then lock in a site
+                      You&apos;ve reviewed your risk breakdown. Finish planning with packing, then lock in a site
                       while availability is best.
                     </p>
                     <div className="mt-5 grid gap-4 sm:grid-cols-2">

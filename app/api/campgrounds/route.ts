@@ -300,6 +300,6 @@ export async function POST(request: NextRequest) {
     origin: { lat: originLat, lon: originLon },
     results,
     attribution:
-      "Campground names, descriptions, attributes, and photos from RIDB. Listings are for planning only — always confirm fees, rules, and availability on Recreation.gov before booking. Safety scores match your trip dashboard within 15 miles; farther sites use the same model at campground coordinates. Scout does not process payments.",
+      "Campground names, descriptions, attributes, and photos from RIDB. Listings are for planning only — always confirm fees, rules, and availability on Recreation.gov before booking. Risk scores match your trip dashboard within 15 miles; farther sites use the same model at campground coordinates. Scout does not process payments.",
   });
 }
