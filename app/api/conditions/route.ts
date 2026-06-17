@@ -88,43 +88,59 @@ export async function GET(request: NextRequest) {
   const startDate = searchParams.get('startDate')
   const endDate = searchParams.get('endDate')
   const distance = searchParams.get('distance')
-  if (!address || !startDate || !endDate || !distance) {
+  const latParam = searchParams.get('lat')
+  const lonParam = searchParams.get('lon')
+  const hasCoords = latParam !== null && lonParam !== null
+
+  if ((!address && !hasCoords) || !startDate || !endDate || !distance) {
     return NextResponse.json(
-      { error: 'Missing address or startDate or endDate or distance' },
+      { error: 'Missing address (or lat/lon), startDate, endDate, or distance' },
       { status: 400 }
     )
   }
 
-  // ── Geocoding with fallback query variants ─────────────────────────────────
-  const queryVariants = [
-    address,
-    address.replace(/\s+\d{5}(?:-\d{4})?$/, '').trim(),
-    address.split(',').map((part) => part.trim()).slice(-3).join(', '),
-    address.split(',').map((part) => part.trim()).slice(-2).join(', '),
-  ]
-  const uniqueQueries = Array.from(new Set(queryVariants.filter(Boolean)))
+  let lat: number
+  let lon: number
 
-  let geocodeMatch: { lat: string; lon: string } | null = null
-  for (const query of uniqueQueries) {
-    const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=us`
-    const geoRes = await fetch(geocodeUrl, { headers: { 'User-Agent': 'scout-app' } })
-    if (!geoRes.ok) continue
-    const geoData = await geoRes.json()
-    if (Array.isArray(geoData) && geoData.length > 0) {
-      geocodeMatch = geoData[0]
-      break
+  if (hasCoords) {
+    // Skip geocoding when coordinates are supplied directly (e.g. from campground search results)
+    lat = parseFloat(latParam!)
+    lon = parseFloat(lonParam!)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return NextResponse.json({ error: 'Invalid lat/lon coordinates' }, { status: 400 })
     }
-  }
+  } else {
+    // ── Geocoding with fallback query variants ───────────────────────────────
+    const queryVariants = [
+      address!,
+      address!.replace(/\s+\d{5}(?:-\d{4})?$/, '').trim(),
+      address!.split(',').map((part) => part.trim()).slice(-3).join(', '),
+      address!.split(',').map((part) => part.trim()).slice(-2).join(', '),
+    ]
+    const uniqueQueries = Array.from(new Set(queryVariants.filter(Boolean)))
 
-  if (!geocodeMatch) {
-    return NextResponse.json(
-      { error: 'Address not found. Try a more specific address, nearby landmark, or city/state.' },
-      { status: 404 }
-    )
-  }
+    let geocodeMatch: { lat: string; lon: string } | null = null
+    for (const query of uniqueQueries) {
+      const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&countrycodes=us`
+      const geoRes = await fetch(geocodeUrl, { headers: { 'User-Agent': 'scout-app' } })
+      if (!geoRes.ok) continue
+      const geoData = await geoRes.json()
+      if (Array.isArray(geoData) && geoData.length > 0) {
+        geocodeMatch = geoData[0]
+        break
+      }
+    }
 
-  const lat = parseFloat(geocodeMatch.lat)
-  const lon = parseFloat(geocodeMatch.lon)
+    if (!geocodeMatch) {
+      return NextResponse.json(
+        { error: 'Address not found. Try a more specific address, nearby landmark, or city/state.' },
+        { status: 404 }
+      )
+    }
+
+    lat = parseFloat(geocodeMatch.lat)
+    lon = parseFloat(geocodeMatch.lon)
+  }
 
   // ── Date clamping ──────────────────────────────────────────────────────────
   const startDateObj = new Date(startDate)

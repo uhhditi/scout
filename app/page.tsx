@@ -29,6 +29,7 @@ import {
   type TripReportResult,
 } from "@/lib/tripReportFromConditionsPayload";
 import { groupProfileFromWizardSelections } from "@/lib/groupProfileFromWizard";
+import { TripPlannerPanel, type ParsedTrip } from "@/app/components/trip-planner-panel";
 
 function parseLocalYMD(ymd: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
@@ -841,6 +842,30 @@ export default function Home() {
     message: string | null;
     attribution: string | null;
   }>({ loading: false, message: null, attribution: null });
+  const [showAiPlanner, setShowAiPlanner] = useState(false);
+
+  const handleAiParsed = (parsed: ParsedTrip) => {
+    if (parsed.location) setAddress(parsed.location);
+    if (parsed.startDate) setStartDate(parsed.startDate);
+    if (parsed.endDate) setEndDate(parsed.endDate);
+    if (parsed.companions.length) setCompanions(parsed.companions);
+    if (parsed.healthConcerns.length) setHealthConcerns(parsed.healthConcerns);
+    if (parsed.rawDescription) {
+      setCompanionDetails(parsed.rawDescription);
+      setHealthDetails(parsed.rawDescription);
+    }
+    setShowAiPlanner(false);
+
+    if (parsed.complete) {
+      void runScoutTrip(parsed);
+    } else if (parsed.location && (!parsed.startDate || !parsed.endDate)) {
+      setWizardStep(1); // have location, need dates
+    } else if (parsed.location && parsed.startDate && parsed.endDate) {
+      setWizardStep(2); // have location + dates, need companions
+    } else {
+      setWizardStep(0); // nothing useful, start from scratch
+    }
+  };
 
   const normalizedOverallScore = report
     ? report.overallScore > 10
@@ -863,8 +888,12 @@ export default function Home() {
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }, [reportView, report]);
 
-  const loadCampgroundsFromScout = async (tripReport: SafetyReport) => {
-    const trimmed = address.trim();
+  const loadCampgroundsFromScout = async (tripReport: SafetyReport, overrides?: ParsedTrip) => {
+    const trimmed = (overrides?.location ?? address).trim();
+    const resolvedStart = overrides?.startDate ?? startDate;
+    const resolvedEnd = overrides?.endDate ?? endDate;
+    const resolvedCompanions = overrides?.companions ?? companions;
+    const resolvedHealth = overrides?.healthConcerns ?? healthConcerns;
     const tripSafetyScore =
       typeof tripReport.overallScore === "number" && Number.isFinite(tripReport.overallScore)
         ? tripReport.overallScore > 10
@@ -872,7 +901,7 @@ export default function Home() {
           : tripReport.overallScore
         : 0;
 
-    if (!trimmed || !startDate || !endDate) {
+    if (!trimmed || !resolvedStart || !resolvedEnd) {
       setCampgroundRows([]);
       setCampgroundsMeta({
         loading: false,
@@ -889,11 +918,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           address: trimmed,
-          startDate,
-          endDate,
+          startDate: resolvedStart,
+          endDate: resolvedEnd,
           distance: 10,
-          companions,
-          healthConcerns,
+          companions: resolvedCompanions,
+          healthConcerns: resolvedHealth,
           tripSafetyScore,
         }),
       });
@@ -1017,8 +1046,13 @@ export default function Home() {
     }
   };
 
-  const runScoutTrip = async () => {
+  const runScoutTrip = async (overrides?: ParsedTrip) => {
     const distanceNum = 10;
+    const resolvedAddress = overrides?.location ?? address;
+    const resolvedStart = overrides?.startDate ?? startDate;
+    const resolvedEnd = overrides?.endDate ?? endDate;
+    const resolvedCompanions = overrides?.companions ?? companions;
+    const resolvedHealth = overrides?.healthConcerns ?? healthConcerns;
     setErrorMessage(null);
     setReport(null);
     setChartData(null);
@@ -1027,44 +1061,40 @@ export default function Home() {
     setCampgroundsMeta({ loading: false, message: null, attribution: null });
     setExpandedMetric({});
     setIsScouting(true);
-    const { vulnerableMembers, medicalConditions } = groupProfileFromWizardSelections(companions, healthConcerns);
+    const { vulnerableMembers, medicalConditions } = groupProfileFromWizardSelections(resolvedCompanions, resolvedHealth);
 
     try {
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
-        address,
-        startDate,
-        endDate,
+        resolvedAddress,
+        resolvedStart,
+        resolvedEnd,
         distanceNum,
-        {
-          vulnerableMembers,
-          medicalConditions,
-        }
+        { vulnerableMembers, medicalConditions }
       );
       setReport(nextReport);
       setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
-      const tripType = deriveTripType(startDate, endDate);
-      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
+      const resolvedDetails = overrides?.rawDescription ?? "";
+      const tripType = deriveTripType(resolvedStart, resolvedEnd);
+      const profile = buildProfile(resolvedCompanions, resolvedHealth, resolvedDetails || companionDetails, resolvedDetails || healthDetails);
       setChecklist(recommendGear(profile, tripType, meta.weatherCtx));
-      void loadCampgroundsFromScout(nextReport);
+      void loadCampgroundsFromScout(nextReport, overrides);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Something went wrong.";
       const { report: fallbackReport, ...fallbackMeta } = buildDegradedReportResult(
-        startDate,
-        endDate,
-        {
-          vulnerableMembers,
-          medicalConditions,
-        },
+        resolvedStart,
+        resolvedEnd,
+        { vulnerableMembers, medicalConditions },
         `We couldn't finish loading your trip (${detail}). The dashboard below is an approximate view until you try again.`
       );
       setReport(fallbackReport);
       setReportGeneratedAt(new Date().toISOString());
       setChartData(fallbackMeta);
       setExpandedMetric({});
-      const tripType = deriveTripType(startDate, endDate);
-      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
+      const resolvedDetails = overrides?.rawDescription ?? "";
+      const tripType = deriveTripType(resolvedStart, resolvedEnd);
+      const profile = buildProfile(resolvedCompanions, resolvedHealth, resolvedDetails || companionDetails, resolvedDetails || healthDetails);
       setChecklist(recommendGear(profile, tripType, fallbackMeta.weatherCtx));
       setCampgroundRows([]);
       setCampgroundsMeta({ loading: false, message: null, attribution: null });
@@ -1139,7 +1169,13 @@ export default function Home() {
             </header>
           )}
 
-          {!report && (
+          {!report && showAiPlanner && (
+            <div className="mx-auto flex w-full max-w-2xl flex-col px-4 py-12 sm:px-6">
+              <TripPlannerPanel onBack={() => setShowAiPlanner(false)} onParsed={handleAiParsed} />
+            </div>
+          )}
+
+          {!report && !showAiPlanner && (
             <div
               className="font-display flex flex-1 flex-col items-center justify-center px-2 pb-8 pt-6 sm:pt-10"
               role="region"
@@ -1214,6 +1250,15 @@ export default function Home() {
                         className="rounded-full bg-[#ea8a12] px-12 py-4 text-base font-extrabold text-white shadow-md transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:px-14 sm:py-4 sm:text-lg"
                       >
                         {isValidatingAddress ? "Checking…" : "Next"}
+                      </button>
+                    </div>
+                    <div className="pt-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowAiPlanner(true)}
+                        className="text-sm font-semibold text-[#ea8a12] underline-offset-2 transition hover:underline"
+                      >
+                        ✨ Or describe your trip in plain English →
                       </button>
                     </div>
                   </div>
