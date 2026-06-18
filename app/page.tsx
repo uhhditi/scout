@@ -3,24 +3,33 @@
 import { useEffect, useRef, useState } from "react";
 import { type SafetyMetric, type SafetyReport } from "@/lib/safetyReport";
 import {
+  calculateFireRisk,
+  calculateAirQualityRisk,
+  calculateWeatherAlertness,
   calculateBearRisk,
   getBearDangerRating,
   calculateOverallSafetyScore,
+  calculateTerrainRoughness,
+  calculateElevationMobilityRisk,
+  terrainRoughnessLabel,
   applyGroupMultipliers,
   type GroupProfile,
   type RiskScores,
   getRiskLevel,
+  getNearestFireDistanceKm,
+  extractFireCoordinates,
 } from "@/lib/riskScoring";
 import { GearChecklist } from "@/app/components/gear-checklist";
 import { TripDateRangePicker } from "@/app/components/trip-date-range-picker";
 import { recommendGear, deriveTripType, type TripProfile, type WeatherContext, type ChecklistSection } from "@/lib/gearRecommender";
-import { getExtremeWeatherLabel } from "@/lib/airQualityCopy";
+import { getExtremeWeatherLabel, getAirQualityRating, getAirQualityLabel } from "@/lib/airQualityCopy";
 import {
   buildReportResultFromConditionsPayload,
   type ConditionsPayload,
   type TripReportResult,
 } from "@/lib/tripReportFromConditionsPayload";
 import { groupProfileFromWizardSelections } from "@/lib/groupProfileFromWizard";
+import { TripPlannerPanel, type ParsedTrip } from "@/app/components/trip-planner-panel";
 
 function parseLocalYMD(ymd: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
@@ -103,6 +112,27 @@ function makeReportId(address: string, startDate: string, endDate: string) {
     hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
   }
   return `SR-${hash.toString(16).toUpperCase().padStart(8, "0").slice(0, 8)}`;
+}
+
+function kmToMiles(km: number) {
+  return km * 0.621371;
+}
+
+function kmhToMph(kmh: number) {
+  return kmh * 0.621371;
+}
+
+function metersToFeet(meters: number) {
+  return meters * 3.28084;
+}
+
+function formatElevation(meters: number) {
+  const ft = Math.round(Math.abs(meters) * 3.28084);
+  return meters < 0 ? `${ft} ft below sea level` : `${ft} ft`;
+}
+
+function mmToInches(mm: number) {
+  return mm * 0.0393701;
 }
 
 const COMPANION_TAGS = ["Just me", "Partner", "Friends", "Kids", "Elderly", "Pets"] as const;
@@ -194,23 +224,105 @@ function overallPill(score: number) {
   return { label: "ELEVATED", className: "bg-red-100 text-red-700 ring-1 ring-red-200" };
 }
 
+function overallTripVerdict(score: number) {
+  if (score > 6.5) {
+    return { headline: "Looking good — happy camping! 🏕️", className: "text-emerald-800" };
+  }
+  if (score >= 4.5) {
+    return { headline: "We recommend proceeding with caution", className: "text-amber-800" };
+  }
+  return { headline: "We recommend judgement call day-of", className: "text-orange-800" };
+}
+
+function buildKeepInMindItems(
+  data: Omit<TripReportResult, "report"> | null,
+  terrainLevel: number
+): string[] {
+  if (!data) return [];
+
+  const items: string[] = [];
+  const ctx = data.weatherCtx;
+  const bearLevel = data.bearDangerRating ?? 1;
+  const terrain = terrainLevel;
+
+  if (data.fireRisk >= 55) {
+    items.push("Wildfire risk is elevated. Check closures and have a backup route.");
+  } else if (data.fireRisk >= 30) {
+    items.push("Some wildfire concern nearby. Monitor official fire maps before you leave.");
+  }
+
+  if (data.airQualityUnavailable) {
+    items.push("Air quality forecast was unavailable. Check local AQI closer to departure.");
+  } else if (data.airRisk >= 45 || /unhealthy/i.test(data.airQualityLabel)) {
+    items.push("Air quality may be poor. Consider masks if anyone has asthma or respiratory sensitivity.");
+  } else if (data.airRisk >= 25) {
+    items.push("Moderate air quality is possible. Worth a quick check before you head out.");
+  }
+
+  if (data.weatherHazardScore >= 60) {
+    items.push(
+      `Significant weather hazards (${data.weatherHazardLabel.toLowerCase()}). Plan for storms, wind, or flooding.`
+    );
+  } else if (data.weatherHazardScore >= 40 || ctx?.hasRain) {
+    items.push("Rain or unsettled weather in the forecast. Pack waterproof layers and watch trail conditions.");
+  }
+  if (ctx?.hasThunderstorm) {
+    items.push("Thunderstorms possible. Avoid exposed ridges and plan around afternoon storms.");
+  }
+  if (data.nwsAlertEvents.length > 0) {
+    const preview = data.nwsAlertEvents.slice(0, 2).join("; ");
+    items.push(
+      `Active NWS alert${data.nwsAlertEvents.length > 1 ? "s" : ""}: ${preview}${data.nwsAlertEvents.length > 2 ? "…" : ""}.`
+    );
+  }
+
+  if (bearLevel >= 4) {
+    items.push("High bear activity expected. Use strict food storage and bear-aware travel habits.");
+  } else if (bearLevel >= 3) {
+    items.push("Bear activity is notable for this area and season. Use bear boxes and make noise on trail.");
+  } else if (bearLevel >= 2) {
+    items.push("Wildlife is present. Store scented items properly and follow local food-storage rules.");
+  }
+
+  if (terrain >= 4) {
+    items.push(
+      `Terrain is challenging${data.terrainLabel ? ` (${data.terrainLabel.toLowerCase()})` : ""}. Pace yourself and plan for elevation gain.`
+    );
+  } else if (terrain >= 3) {
+    items.push("Moderate elevation and terrain. Allow extra time and bring sturdy footwear.");
+  } else if (ctx?.isHighAltitude) {
+    items.push("Higher elevation. Hydrate well and watch for altitude symptoms.");
+  }
+
+  if (ctx?.isCold) {
+    items.push("Cold temperatures possible. Layer up and keep sleeping insulation dry.");
+  }
+
+  if (items.length === 0) {
+    items.push("Conditions look relatively calm. Still check forecasts and local advisories the day you leave.");
+  }
+
+  return items.slice(0, 6);
+}
+
 function metricSecondary(metric: SafetyMetric) {
   const v = metric.value;
   switch (metric.label) {
     case "Fire Risk": {
-      const level = Math.max(1, Math.min(5, Math.round(6 - (v / 100) * 5)));
+      const level = v >= 80 ? 1 : v >= 55 ? 2 : v >= 35 ? 3 : v >= 18 ? 4 : 5;
       const pill =
-        level <= 2 ? "Low" : level === 3 ? "Moderate" : level === 4 ? "High" : "Severe";
+        level === 1 ? "Low" : level === 2 ? "Moderate" : level === 3 ? "Elevated" : level === 4 ? "High" : "Severe";
       return { line: "", pill };
     }
     case "Air Quality": {
-      const aqi = Math.round(Math.max(28, Math.min(165, 175 - v * 1.25)));
-      const pill = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : "Sensitive";
-      return { line: `${aqi} AQI`, pill };
+  // v is (100 - airQualityRisk), so risk = 100 - v
+      const risk = 100 - v;
+      const pill = risk <= 25 ? "Good" : risk <= 45 ? "Moderate" : "Sensitive";
+      return { line: "", pill };
     }
     case "Weather Alertness": {
       const temp = 52 + (v % 34);
-      const pill = v >= 75 ? "Low" : v >= 55 ? "Moderate" : "High";
+      const pill = v >= 75 ? "Low" : v >= 55 ? "Moderate" : v >= 35 ? "High" : "Extreme";
       return { line: `${temp}° projected`, pill };
     }
     case "Bear Risk": {
@@ -227,19 +339,20 @@ function metricPrimary(metric: SafetyMetric) {
   const v = metric.value;
   switch (metric.label) {
     case "Fire Risk": {
-      const level = Math.max(1, Math.min(5, Math.round(6 - (v / 100) * 5)));
+      const level = v >= 80 ? 1 : v >= 55 ? 2 : v >= 35 ? 3 : v >= 18 ? 4 : 5;
       return { value: `Risk ${level}`, subtitle: "Risk level based on current proximity to wildfire and adverse conditions." };
     }
     case "Air Quality": {
-      const aqi = Math.round(Math.max(28, Math.min(165, 175 - v * 1.25)));
-      return { value: `${aqi} AQI`, subtitle: "Current particulate estimate" };
-    }
+  const aqi = metric.rawAqi ?? 0;
+  const label = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : aqi <= 150 ? "Unhealthy (Sensitive)" : "Unhealthy";
+  return { value: `${aqi} AQI`, subtitle: `Trip average — ${label}` };
+}
     case "Weather Alertness": {
       const temp = 52 + (v % 34);
       return { value: `${temp}° Temp`, subtitle: "Expected daytime high" };
     }
     case "Bear Risk":
-      return { value: `Risk ${Math.round(100 - v)}`, subtitle: "Bear activity risk based on elevation and season" };
+      return { value: `Risk ${Math.round(100 - v)}`, subtitle: "Bear activity risk based on elevation, season, and recent sightings" };
     default:
       return { value: `${v}`, subtitle: "Current reading" };
   }
@@ -393,6 +506,11 @@ function buildDegradedReportResult(
     bearRisk,
     bearDangerRating,
     bearRiskDetails,
+    terrainDifficultyScore: 0,
+    terrainDifficultyLevel: 1,
+    terrainElevationDetails: [],
+    terrainLabel: "Unknown",
+    nwsAlertEvents: [],
     airQualityUnavailable: true,
     conditionsNotice,
     dataSummaryIncomplete: true,
@@ -412,61 +530,271 @@ async function generateSafetyReportFromAPI(
   let response: Response;
   try {
     response = await fetch(url);
-  } catch {
-    return buildDegradedReportResult(
-      startDate,
-      endDate,
-      groupProfile,
-      "We could not reach the Scout conditions service. Check your connection and try again."
-    );
-  }
 
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: string };
-    const detail = typeof body.error === "string" ? body.error : "";
-    let notice =
-      "Forecast and safety data could not be loaded. That often happens when trip dates are too far in the future, a data provider timed out, or the request could not be completed.";
-    if (response.status === 404) {
-      notice =
-        "We could not place that address on the map. Try a fuller street address, a nearby town, or a landmark, then run Scout again.";
-    } else if (response.status === 400) {
-      notice = "Those trip dates look invalid. Pick a valid start and end date and try again.";
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error ?? `Failed to fetch conditions data: ${response.status} ${response.statusText}`);
     }
-    if (detail) {
-      notice = `${notice} (${detail})`;
+
+    const data = await response.json();
+    const {
+      weather, airQuality, airQualityUnavailable, fire, location,
+      forecastNotice, forecastWindowUsed,
+      nwsAlertEvents = [],
+      droughtCategory = 0,
+      floodZone = null,
+      nfdrsErcPercentile = 0,
+      bearObservationCount = 0,
+      inatBearCount = 0,
+      bearSightingDetails = [],
+      streamStageRatio = null,
+    } = data;
+
+    console.log('Location resolved:', { lat: location?.lat, lon: location?.lon, address });
+
+    const weatherDaily = weather?.daily || {};
+    const airHourly = airQuality?.hourly?.us_aqi || [];
+
+    // Terrain roughness from 3×3 elevation grid
+    const terrainElevations: number[] = location?.terrainElevations ?? [];
+    const terrainRoughness = calculateTerrainRoughness(terrainElevations);
+    const terrainLabel = terrainRoughnessLabel(terrainRoughness);
+
+
+
+    const fireRisk = calculateFireRisk(
+      fire,
+      weatherDaily,
+      startDate,
+      endDate,
+      location?.lat,
+      location?.lon,
+      droughtCategory,
+      nfdrsErcPercentile,
+    );
+    const airQualityRisk = calculateAirQualityRisk(airHourly);
+    const avgAqi = airHourly.length
+      ? airHourly.reduce((sum: number, value: number) => sum + value, 0) / airHourly.length
+      : 0;
+    // console.log('AQ debug:', { avgAqi, airHourlyLength: airHourly.length, first5: airHourly.slice(0, 5) });
+    const airQualityRating = getAirQualityRating(avgAqi);
+    const airQualityLabel = getAirQualityLabel(airQualityRating);
+    const airQualityDetails = airQualityUnavailable
+      ? [
+          "Average AQI for your selected trip window is not available because forecasts only extend 5 days.",
+          "Check local AQI updates closer to departure so your group can plan effort level and protection.",
+        ]
+      : [
+          `Average AQI over your trip is ${Math.round(avgAqi)}, which is ${airQualityLabel}.`,
+          airQualityRating >= 3
+            ? "If anyone in your group has respiratory sensitivity, keep masks and low-exertion backup plans ready."
+            : airQualityRating === 2
+              ? "Conditions are generally manageable, but monitor updates and reduce prolonged exertion if AQI rises."
+              : "Air quality is favorable for most groups, though checking daily updates is still recommended.",
+        ];
+    const weatherAlertness = calculateWeatherAlertness(weatherDaily, startDate, endDate, nwsAlertEvents, floodZone, streamStageRatio);
+    const tripDaysCount =
+      Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const weatherCodeWindow = (weatherDaily.weathercode || []).slice(0, tripDaysCount);
+    const precipitationWindow = (weatherDaily.precipitation_sum || []).slice(0, tripDaysCount);
+    const windWindow = (weatherDaily.windspeed_10m_max || []).slice(0, tripDaysCount);
+    const thunderstormDays = weatherCodeWindow.filter((code: number) => [95, 96, 99].includes(code)).length;
+    const snowDays = weatherCodeWindow.filter((code: number) => [71, 73, 75, 77, 85, 86].includes(code)).length;
+    const heavyRainDays = precipitationWindow.filter((value: number) => value > 20).length;
+    const extremeWindDays = windWindow.filter((value: number) => value > 50).length;
+    const hazardSignals: string[] = [];
+    if (thunderstormDays > 0) hazardSignals.push(`${thunderstormDays} day(s) with thunderstorms`);
+    if (snowDays > 0) hazardSignals.push(`${snowDays} day(s) with snow/sleet`);
+    if (heavyRainDays > 0) hazardSignals.push(`${heavyRainDays} day(s) with heavy rain`);
+    if (extremeWindDays > 0) hazardSignals.push(`${extremeWindDays} day(s) with extreme wind`);
+    const weatherHazardDetails: string[] = [
+      hazardSignals.length > 0
+        ? `Potential extreme weather signals include ${hazardSignals.join(", ")}.`
+        : "No thunderstorms, snow, heavy rain, or extreme wind are currently forecast in your trip window.",
+      (() => {
+        const peakTemp = Math.max(...((weatherDaily.temperature_2m_max as number[] | undefined) ?? [20]));
+        const peakPrecip = precipitationWindow.length ? Math.max(...precipitationWindow) : 0;
+        const peakWind = windWindow.length ? Math.max(...windWindow) : 0;
+        if (peakTemp > 35) return "Expect high heat — bring extra water, electrolytes, and shade shelter. Limit strenuous activity during midday hours.";
+        if (peakPrecip > 15) return "Heavy rain is in the forecast — pack waterproof layers, a rain fly, and plan for muddy or flooded trail sections.";
+        if (peakWind > 40 && peakPrecip < 2) return "Strong dry winds are forecast — fire spread potential is elevated. Avoid open fires and have an evacuation plan ready.";
+        if (peakTemp < 5) return "Sub-freezing temperatures are possible — layer aggressively, protect extremities, and keep sleeping insulation dry.";
+        return "Pack a light rain layer and be ready for temperature swings, especially at elevation or overnight.";
+      })(),
+      floodZone
+        ? `Flood zone: ${floodZone}. ${["AE","A","AH","AO","VE","V"].includes(floodZone.toUpperCase()) ? "High-risk zone with a 1% annual flood probability — avoid low-lying ground during rain." : "Lower long-term flood risk for this location."}`
+        : "FEMA flood zone data was unavailable for this location.",
+      ...(streamStageRatio !== null
+        ? [`Nearby USGS stream gauges are at ${Math.round(streamStageRatio * 100)}% of high-water benchmark.`]
+        : []),
+      ...(nwsAlertEvents.some((e: string) => e.toLowerCase().includes("flood"))
+        ? ["Active NWS flood alert in effect — monitor conditions closely."]
+        : []),
+    ];
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    const seenMonths = new Set<number>();
+    const cur = new Date(startDateObj);
+    while (cur <= endDateObj) {
+      seenMonths.add(cur.getMonth() + 1);
+      cur.setMonth(cur.getMonth() + 1);
     }
-    return buildDegradedReportResult(startDate, endDate, groupProfile, notice);
-  }
+    const areaElevation = Number(location?.elevation ?? 0);
+    const bearRisk = Math.max(
+      ...Array.from(seenMonths).map((m) =>
+        calculateBearRisk(areaElevation, location?.lat || 39, m, bearObservationCount, terrainRoughness)
+      )
+    );
+    const bearDangerRating = Math.max(
+      ...Array.from(seenMonths).map((m) =>
+        getBearDangerRating(areaElevation, location?.lat || 39, m, bearObservationCount, terrainRoughness)
+      )
+    );
+    const strongestWind = windWindow.length ? Math.max(...windWindow) : 0;
+    const driestDay = precipitationWindow.length ? Math.min(...precipitationWindow) : 0;
+    const wettestDay = precipitationWindow.length ? Math.max(...precipitationWindow) : 0;
+    const windLevel =
+      strongestWind > 40 ? "high" : strongestWind > 30 ? "moderately high" : strongestWind > 20 ? "elevated" : "low";
+    const precipitationLevel =
+      wettestDay > 20 ? "heavy" : wettestDay > 10 ? "moderate" : wettestDay > 5 ? "light-to-moderate" : "light";
+    const firePointCount = extractFireCoordinates(fire).length;
+    const nearestFireKm =
+      location?.lat != null && location?.lon != null
+        ? getNearestFireDistanceKm(fire, location.lat, location.lon)
+        : null;
+    const fireDetails = [
+      firePointCount > 0
+        ? nearestFireKm != null
+          ? `${firePointCount} active fire hotspot(s) were observed in the last 5 days. Nearest is about ${kmToMiles(nearestFireKm).toFixed(1)} mi from your campsite, which increases wildfire concern nearby.`
+          : `${firePointCount} active fire hotspot(s) were observed in the last 5 days within your search area, increasing wildfire concern nearby.`
+        : "No active fire hotspots were observed in the last 5 days in your search area.",
+      `Weather impact: peak wind is ${kmhToMph(strongestWind).toFixed(1)} mph (${windLevel})${mmToInches(wettestDay) >= 0.01 ? `, and precipitation ranges ${mmToInches(driestDay).toFixed(2)}–${mmToInches(wettestDay).toFixed(2)} in (${precipitationLevel})` : ', with no precipitation forecast'}. ${wettestDay <= 1 && strongestWind > 15 ? 'Dry and windy conditions increase fire spread potential.' : 'Higher wind with lower rainfall increases fire spread potential.'}`,
+      ...(droughtCategory >= 2 ? [`Drought level D${droughtCategory} detected in this area — dry conditions amplify fire spread risk.`] : []),
+      ...(nfdrsErcPercentile >= 75 ? [`Fire danger index: ERC at the ${Math.round(nfdrsErcPercentile)}th percentile — conditions are drier than ${Math.round(nfdrsErcPercentile)}% of historical readings for this area.`] : []),
+    ];
+    const closestSighting = bearSightingDetails[0];
+    const bearRiskDetails = [
+      `Your area elevation is ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100). Higher, more rugged terrain generally sees more bear activity.`,
+      inatBearCount > 0
+        ? `${inatBearCount} verified bear observation(s) recorded within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}.`
+        : "No recent verified bear observations found within 62 miles via iNaturalist.",
+      "Store all food and scented items in bear-proof containers or hang them properly.",
+    ];
 
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    return buildDegradedReportResult(
-      startDate,
-      endDate,
-      groupProfile,
-      "The conditions service returned an unexpected response. Please try again in a moment."
+    const hasMobilityFlag = groupProfile.medicalConditions.some(
+      (c) => c === 'knee_joints' || c.toLowerCase().includes('mobility') || c.toLowerCase().includes('knee')
     );
-  }
-  if (!data || typeof data !== "object") {
-    return buildDegradedReportResult(
-      startDate,
-      endDate,
-      groupProfile,
-      "Trip conditions could not be interpreted. Please try again."
-    );
-  }
+    const baseTerrainScore = calculateElevationMobilityRisk(areaElevation, terrainRoughness);
+    const terrainDifficultyScore = hasMobilityFlag ? Math.min(100, Math.round(baseTerrainScore * 1.35)) : baseTerrainScore;
+    const terrainDifficultyLevel = Math.max(1, Math.min(5, Math.ceil(terrainDifficultyScore / 20)));
+    const terrainElevationDetails: string[] = [
+      `Elevation: ${formatElevation(areaElevation)} — ${terrainLabel.toLowerCase()} terrain (roughness ${terrainRoughness}/100).${areaElevation > 2000 ? " High altitude increases physical effort and acclimatization time." : areaElevation > 1000 ? " Moderate elevation with some stamina demands on trail." : areaElevation < 0 ? " Below sea level — flat terrain with minimal elevation-related exertion." : " Relatively low elevation."}`,
+      ...(inatBearCount > 0 ? [
+        `🐻 ${inatBearCount} verified bear observation(s) within 62 miles in the past 90 days via iNaturalist${closestSighting ? ` (closest: ${kmToMiles(closestSighting.distanceKm).toFixed(1)} mi, ${closestSighting.taxon})` : ""}. Store food in bear-proof containers.`,
+      ] : []),
+    ];
 
-  try {
-    return buildReportResultFromConditionsPayload(data as ConditionsPayload, startDate, endDate, groupProfile);
-  } catch {
-    return buildDegradedReportResult(
-      startDate,
-      endDate,
-      groupProfile,
-      "Something went wrong while building your safety report. The dashboard below is an approximate view; try again in a moment."
+    const overallSafetyRaw = calculateOverallSafetyScore(
+      fireRisk,
+      airQualityRisk,
+      weatherAlertness,
+      bearRisk,
     );
+    const maxTemp = (weatherDaily.temperature_2m_max || []).length
+      ? Math.max(...weatherDaily.temperature_2m_max)
+      : 20;
+    const temperatureRisk = maxTemp > 38 ? 10 : maxTemp > 34 ? 8 : maxTemp > 30 ? 6 : maxTemp < 0 ? 8 : 3;
+    const windRisk = Math.min(10, strongestWind / 6);
+    const precipitationRisk = Math.min(10, wettestDay / 3);
+    const baseRiskScores: RiskScores = {
+      overall: Math.max(0, 10 - overallSafetyRaw),
+      weather: weatherAlertness / 10,
+      temperature: temperatureRisk,
+      wind: windRisk,
+      precipitation: precipitationRisk,
+      fire: fireRisk / 10,
+      airQuality: airQualityRisk / 10,
+    };
+    const adjustedRiskScores = applyGroupMultipliers(baseRiskScores, groupProfile);
+    const adjustedFireRisk = adjustedRiskScores.fire * 10;
+    const adjustedAirQualityRisk = adjustedRiskScores.airQuality * 10;
+    const adjustedWeatherAlertness = adjustedRiskScores.weather * 10;
+    const overallSafety = Math.max(0, 10 - adjustedRiskScores.overall);
+    const tempsWindow = weatherDaily.temperature_2m_max || [];
+    const metrics = [
+      {
+        label: "Fire Risk",
+        value: 100 - adjustedFireRisk,
+        note: "Fire risk index based on hotspot detections, drought severity, and NOAA fire weather outlook.",
+        icon: "🔥",
+      },
+      {
+        label: "Air Quality",
+        value: 100 - adjustedAirQualityRisk,
+        note: `Air quality index today is ${airHourly[0] || 50}. Monitor for smoke and particulates.`,
+        icon: "💨",
+        rawAqi: Math.round(avgAqi),
+      },
+      {
+        label: "Weather Alertness",
+        value: 100 - adjustedWeatherAlertness,
+        note: "Weather hazard index from storm codes, heavy precipitation, extreme winds, and NWS active alerts.",
+        icon: "⛈️",
+      },
+      {
+        label: "Bear Risk",
+        value: 100 - bearRisk,
+        note: "Bear activity risk based on elevation, terrain, season, and recent iNaturalist sightings.",
+        icon: "🐻",
+      },
+    ];
+
+    const rainCodes = new Set([51, 53, 55, 61, 63, 65, 67, 80, 81, 82]);
+    const thunderCodes = new Set([95, 96, 99]);
+    const weatherCtx: WeatherContext = {
+      hasRain:
+        weatherCodeWindow.some((c: number) => rainCodes.has(c)) ||
+        precipitationWindow.some((p: number) => p > 1),
+      highFireRisk: fireRisk >= 30,
+      isCold: (weatherDaily.temperature_2m_max || []).some((t: number) => t < 55),
+      isHighAltitude: (location?.elevation ?? 0) > 2500,
+      hasThunderstorm: weatherCodeWindow.some((c: number) => thunderCodes.has(c)),
+      highBearRisk: bearDangerRating >= 3,
+      poorAirQuality: !airQualityUnavailable && airQualityRisk > 40,
+    };
+
+    return {
+      report: {
+        overallScore: overallSafety,
+        status: getRiskLevel(overallSafety),
+        metrics,
+      },
+      temps: tempsWindow,
+      fireRisk: adjustedFireRisk,
+      fireDetails,
+      airRisk: adjustedAirQualityRisk,
+      airQualityRating,
+      airQualityLabel,
+      airQualityDetails,
+      weatherHazardScore: adjustedWeatherAlertness,
+      weatherHazardLabel: getExtremeWeatherLabel(adjustedWeatherAlertness),
+      weatherHazardDetails,
+      weatherRisk: adjustedWeatherAlertness,
+      bearRisk,
+      bearDangerRating,
+      bearRiskDetails,
+      terrainDifficultyScore,
+      terrainDifficultyLevel,
+      terrainElevationDetails,
+      terrainLabel,
+      nwsAlertEvents,
+      airQualityUnavailable: !!airQualityUnavailable,
+      forecastNotice,
+      forecastWindowUsed,
+      weatherCtx,
+    };
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -477,7 +805,8 @@ type CampgroundSearchRow = {
   amenityMatchScore: number;
   highlights: string[];
   bookUrl: string;
-  snippet: string;
+  overviewBlurb: string;
+  ridbAmenityTags: string[];
   imageUrl: string | null;
   safetyScore: number;
   safetyScoreUsesTripOrigin: boolean;
@@ -513,6 +842,27 @@ export default function Home() {
     message: string | null;
     attribution: string | null;
   }>({ loading: false, message: null, attribution: null });
+  const [showAiPlanner, setShowAiPlanner] = useState(false);
+
+  const handleAiParsed = (parsed: ParsedTrip) => {
+    if (parsed.location) setAddress(parsed.location);
+    if (parsed.startDate) setStartDate(parsed.startDate);
+    if (parsed.endDate) setEndDate(parsed.endDate);
+    if (parsed.companions.length) setCompanions(parsed.companions);
+    if (parsed.healthConcerns.length) setHealthConcerns(parsed.healthConcerns);
+    if (parsed.rawDescription) {
+      setCompanionDetails(parsed.rawDescription);
+      setHealthDetails(parsed.rawDescription);
+    }
+    setShowAiPlanner(false);
+    setReportView("main");
+
+    if (parsed.location) {
+      setWizardStep(3); // drop to final step — everything pre-filled, user confirms
+    } else {
+      setWizardStep(0); // no location at all, user must type it
+    }
+  };
 
   const normalizedOverallScore = report
     ? report.overallScore > 10
@@ -530,8 +880,17 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const loadCampgroundsFromScout = async (tripReport: SafetyReport) => {
-    const trimmed = address.trim();
+  useEffect(() => {
+    if (!report) return;
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [reportView, report]);
+
+  const loadCampgroundsFromScout = async (tripReport: SafetyReport, overrides?: ParsedTrip) => {
+    const trimmed = (overrides?.location ?? address).trim();
+    const resolvedStart = overrides?.startDate ?? startDate;
+    const resolvedEnd = overrides?.endDate ?? endDate;
+    const resolvedCompanions = overrides?.companions ?? companions;
+    const resolvedHealth = overrides?.healthConcerns ?? healthConcerns;
     const tripSafetyScore =
       typeof tripReport.overallScore === "number" && Number.isFinite(tripReport.overallScore)
         ? tripReport.overallScore > 10
@@ -539,7 +898,7 @@ export default function Home() {
           : tripReport.overallScore
         : 0;
 
-    if (!trimmed || !startDate || !endDate) {
+    if (!trimmed || !resolvedStart || !resolvedEnd) {
       setCampgroundRows([]);
       setCampgroundsMeta({
         loading: false,
@@ -556,11 +915,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           address: trimmed,
-          startDate,
-          endDate,
+          startDate: resolvedStart,
+          endDate: resolvedEnd,
           distance: 10,
-          companions,
-          healthConcerns,
+          companions: resolvedCompanions,
+          healthConcerns: resolvedHealth,
           tripSafetyScore,
         }),
       });
@@ -581,7 +940,10 @@ export default function Home() {
           amenityMatchScore: typeof r.amenityMatchScore === "number" ? r.amenityMatchScore : 0,
           highlights: Array.isArray(r.highlights) ? (r.highlights as string[]) : [],
           bookUrl: String(r.bookUrl ?? "#"),
-          snippet: String(r.snippet ?? ""),
+          overviewBlurb: String(r.overviewBlurb ?? ""),
+          ridbAmenityTags: Array.isArray(r.ridbAmenityTags)
+            ? (r.ridbAmenityTags as string[]).filter((t) => typeof t === "string")
+            : [],
           imageUrl: typeof r.imageUrl === "string" ? r.imageUrl : null,
           safetyScore:
             typeof r.safetyScore === "number" && Number.isFinite(r.safetyScore)
@@ -681,8 +1043,13 @@ export default function Home() {
     }
   };
 
-  const runScoutTrip = async () => {
+  const runScoutTrip = async (overrides?: ParsedTrip) => {
     const distanceNum = 10;
+    const resolvedAddress = overrides?.location ?? address;
+    const resolvedStart = overrides?.startDate ?? startDate;
+    const resolvedEnd = overrides?.endDate ?? endDate;
+    const resolvedCompanions = overrides?.companions ?? companions;
+    const resolvedHealth = overrides?.healthConcerns ?? healthConcerns;
     setErrorMessage(null);
     setReport(null);
     setChartData(null);
@@ -691,44 +1058,40 @@ export default function Home() {
     setCampgroundsMeta({ loading: false, message: null, attribution: null });
     setExpandedMetric({});
     setIsScouting(true);
-    const { vulnerableMembers, medicalConditions } = groupProfileFromWizardSelections(companions, healthConcerns);
+    const { vulnerableMembers, medicalConditions } = groupProfileFromWizardSelections(resolvedCompanions, resolvedHealth);
 
     try {
       const { report: nextReport, ...meta } = await generateSafetyReportFromAPI(
-        address,
-        startDate,
-        endDate,
+        resolvedAddress,
+        resolvedStart,
+        resolvedEnd,
         distanceNum,
-        {
-          vulnerableMembers,
-          medicalConditions,
-        }
+        { vulnerableMembers, medicalConditions }
       );
       setReport(nextReport);
       setReportGeneratedAt(new Date().toISOString());
       setChartData(meta);
       setExpandedMetric({});
-      const tripType = deriveTripType(startDate, endDate);
-      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
+      const resolvedDetails = overrides?.rawDescription ?? "";
+      const tripType = deriveTripType(resolvedStart, resolvedEnd);
+      const profile = buildProfile(resolvedCompanions, resolvedHealth, resolvedDetails || companionDetails, resolvedDetails || healthDetails);
       setChecklist(recommendGear(profile, tripType, meta.weatherCtx));
-      void loadCampgroundsFromScout(nextReport);
+      void loadCampgroundsFromScout(nextReport, overrides);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Something went wrong.";
       const { report: fallbackReport, ...fallbackMeta } = buildDegradedReportResult(
-        startDate,
-        endDate,
-        {
-          vulnerableMembers,
-          medicalConditions,
-        },
+        resolvedStart,
+        resolvedEnd,
+        { vulnerableMembers, medicalConditions },
         `We couldn't finish loading your trip (${detail}). The dashboard below is an approximate view until you try again.`
       );
       setReport(fallbackReport);
       setReportGeneratedAt(new Date().toISOString());
       setChartData(fallbackMeta);
       setExpandedMetric({});
-      const tripType = deriveTripType(startDate, endDate);
-      const profile = buildProfile(companions, healthConcerns, companionDetails, healthDetails);
+      const resolvedDetails = overrides?.rawDescription ?? "";
+      const tripType = deriveTripType(resolvedStart, resolvedEnd);
+      const profile = buildProfile(resolvedCompanions, resolvedHealth, resolvedDetails || companionDetails, resolvedDetails || healthDetails);
       setChecklist(recommendGear(profile, tripType, fallbackMeta.weatherCtx));
       setCampgroundRows([]);
       setCampgroundsMeta({ loading: false, message: null, attribution: null });
@@ -755,15 +1118,16 @@ export default function Home() {
 
 
   const overall = report ? overallPill(normalizedOverallScore) : null;
-  const bearDangerRating = chartData?.bearDangerRating ?? 1;
-  const isBearExpanded = Boolean(expandedMetric["Bear Risk"]);
-  const wildlifeTone = wildlifeMatrixTone(bearDangerRating);
+  const terrainDifficultyLevel = chartData?.terrainDifficultyLevel ?? 1;
+  const terrainTone = wildlifeMatrixTone(terrainDifficultyLevel);
+  const overallVerdict = overallTripVerdict(normalizedOverallScore);
+  const keepInMind = buildKeepInMindItems(chartData, terrainDifficultyLevel);
 
   return (
     <div className="min-h-screen bg-[#fffaf4] text-[#1a1c1e]">
       <div className="scout-main-bg relative min-h-screen">
         <div
-          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "py-12 lg:py-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
+          className={`mx-auto flex w-full max-w-7xl flex-col px-4 sm:px-6 lg:px-7 ${report ? "pb-10 pt-0 sm:pb-12 lg:pb-14" : "min-h-screen justify-between py-8 sm:py-10 lg:py-12"}`}
         >
           {!report && (
             <header className="text-center">
@@ -793,21 +1157,35 @@ export default function Home() {
                   aria-hidden
                 />
               </div>
+              {wizardStep === 0 ? (
+                <p className="font-display mx-auto mt-4 max-w-xl px-2 text-sm font-medium leading-relaxed text-[#888780] sm:mt-5 sm:text-base">
+                  Enter your trip details and get a personalized safety score, packing list, and campsite
+                  recommendations.
+                </p>
+              ) : null}
             </header>
           )}
 
-          {!report && (
+          {!report && showAiPlanner && (
+            <div className="mx-auto flex w-full max-w-2xl flex-col px-4 py-12 sm:px-6">
+              <TripPlannerPanel onBack={() => setShowAiPlanner(false)} onParsed={handleAiParsed} />
+            </div>
+          )}
+
+          {!report && !showAiPlanner && (
             <div
               className="font-display flex flex-1 flex-col items-center justify-center px-2 pb-8 pt-6 sm:pt-10"
               role="region"
               aria-label="Trip planner"
             >
               <div className="w-full max-w-2xl space-y-10 text-center sm:space-y-12">
-                <div className="space-y-4">
-                  <p className="text-[clamp(1.05rem,3.25vw,1.55rem)] font-extrabold tracking-tight text-[#1a1c1e] sm:text-[clamp(1.1rem,2.75vw,1.65rem)]">
-                    Welcome Camper!
-                  </p>
-                  <div className="flex justify-center gap-2.5 pt-1" aria-hidden>
+                <div className={wizardStep === 0 ? "space-y-4" : ""}>
+                  {wizardStep === 0 ? (
+                    <p className="text-[clamp(1.05rem,3.25vw,1.55rem)] font-extrabold tracking-tight text-[#1a1c1e] sm:text-[clamp(1.1rem,2.75vw,1.65rem)]">
+                      Welcome Camper!
+                    </p>
+                  ) : null}
+                  <div className={`flex justify-center gap-2.5 ${wizardStep === 0 ? "pt-1" : ""}`} aria-hidden>
                     {[0, 1, 2, 3].map((i) => (
                       <span
                         key={i}
@@ -839,9 +1217,9 @@ export default function Home() {
                       </label>
                       {showSuggestions && (
                         <ul className="absolute left-0 right-0 top-full z-50 mt-2 max-h-52 overflow-y-auto rounded-2xl border border-[#eadfcd]/90 bg-[#fffcf9]/95 py-1.5 text-base shadow-lg backdrop-blur-md sm:text-lg">
-                          {suggestions.map((s) => (
+                          {suggestions.map((s, i) => (
                             <li
-                              key={s}
+                              key={i}
                               onMouseDown={() => {
                                 setAddress(s);
                                 setSuggestions([]);
@@ -871,6 +1249,15 @@ export default function Home() {
                         {isValidatingAddress ? "Checking…" : "Next"}
                       </button>
                     </div>
+                    <div className="pt-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowAiPlanner(true)}
+                        className="text-sm font-semibold text-[#ea8a12] underline-offset-2 transition hover:underline"
+                      >
+                        ✨ Or describe your trip in plain English →
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -888,7 +1275,7 @@ export default function Home() {
                       }}
                       maxOffsetFromToday={15}
                     />
-                    <p className="text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
+                    <p className="font-display text-sm font-medium leading-relaxed text-[#888780] sm:text-base">
                       Forecast-based scoring is strongest within the next week; the calendar only shows the next 16
                       days (today plus 15).
                     </p>
@@ -927,7 +1314,7 @@ export default function Home() {
                       <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
                         Who&apos;s coming with you?
                       </p>
-                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply (optional).</p>
                     </div>
                     <div className="flex flex-col items-center gap-3 sm:gap-3.5">
                       {[COMPANION_TAGS.slice(0, 4), COMPANION_TAGS.slice(4)].map((row, rowIdx) => (
@@ -993,7 +1380,7 @@ export default function Home() {
                       <p className="text-[clamp(1.15rem,3.5vw,1.85rem)] font-bold leading-snug text-[#3d4249]">
                         Any health considerations?
                       </p>
-                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply — optional.</p>
+                      <p className="text-base text-[#888780] sm:text-lg">Select all that apply (optional).</p>
                     </div>
                     <div className="flex flex-wrap justify-center gap-3 sm:gap-3.5">
                       {HEALTH_TAGS.map((tag) => {
@@ -1063,29 +1450,36 @@ export default function Home() {
           )}
 
           {report && (
-            <section className="mt-0 pt-16">
-              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 py-5 text-[#f5f0e8] sm:px-6 lg:px-8">
-                <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center justify-start gap-1 sm:gap-2">
+            <section className="scout-report-section mt-0">
+              <nav className="fixed inset-x-0 top-0 z-40 border-b border-[#3a2a1c] bg-[#2c1f14] px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top,0px))] text-[#f5f0e8] sm:px-6 sm:py-3.5 lg:px-8">
+                <div className="mx-auto flex max-w-7xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                  <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
                     <button
                       type="button"
                       onClick={() => setReportView("main")}
-                      className="flex items-center gap-1 rounded-lg px-1 py-0.5 text-left transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E8600A] sm:gap-2"
+                      className="flex min-w-0 items-center gap-1 rounded-lg px-1 py-0.5 text-left transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E8600A] sm:gap-2"
                       aria-label="Go to trip dashboard"
                     >
                       <span className="text-2xl sm:text-3xl" aria-hidden>
                         ⛺️
                       </span>
-                      <span className="font-display text-2xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
+                      <span className="font-display truncate text-xl font-semibold tracking-tight text-[#f5f0e8] sm:text-3xl">
                         Scout
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={resetTripPlanner}
+                      className="shrink-0 rounded-2xl bg-[#E8600A] px-3.5 py-1.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:hidden"
+                    >
+                      New trip
+                    </button>
                   </div>
-                  <div className="flex flex-wrap items-center gap-5 sm:justify-end">
+                  <div className="-mx-4 flex min-w-0 items-center gap-4 overflow-x-auto overscroll-x-contain px-4 pb-0.5 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:justify-end sm:gap-5 sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden">
                     <button
                       type="button"
                       onClick={() => setReportView("main")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "main"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1096,7 +1490,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setReportView("packing")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "packing"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1107,7 +1501,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => setReportView("bookings")}
-                      className={`border-b-2 px-1 pb-1 text-base font-semibold transition ${
+                      className={`shrink-0 border-b-2 px-1 pb-1 text-sm font-semibold transition sm:text-base ${
                         reportView === "bookings"
                           ? "border-[#E8600A] text-[#f5f0e8]"
                           : "border-transparent text-[rgba(245,240,232,0.35)] hover:text-[#f5f0e8]"
@@ -1118,7 +1512,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={resetTripPlanner}
-                      className="rounded-[20px] bg-[#E8600A] px-6 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-110"
+                      className="hidden shrink-0 rounded-[20px] bg-[#E8600A] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-110 sm:inline-flex"
                     >
                       Plan another trip
                     </button>
@@ -1127,7 +1521,7 @@ export default function Home() {
               </nav>
 
               {reportView === "packing" ? (
-                <div className="mx-auto mt-6 w-full max-w-7xl space-y-5 px-4 sm:px-6 lg:px-8">
+                <div className="mx-auto mt-4 w-full max-w-7xl space-y-5 px-4 sm:mt-6 sm:px-6 lg:px-8">
                   {checklist && checklist.length > 0 ? (
                     <GearChecklist sections={checklist} />
                   ) : (
@@ -1135,7 +1529,7 @@ export default function Home() {
                   )}
                 </div>
               ) : reportView === "bookings" ? (
-                <div className="mx-auto mt-6 w-full max-w-7xl space-y-5 px-4 sm:px-6 lg:px-8">
+                <div className="mx-auto mt-4 w-full max-w-7xl space-y-5 px-4 sm:mt-6 sm:px-6 lg:px-8">
                   <header className="border-b border-[#eadfcd] border-l-4 border-l-[#ea8a12] pb-5 pl-5 text-left sm:pl-6">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-8 lg:gap-10">
                       <div className="min-w-0 flex-1 space-y-2">
@@ -1146,8 +1540,8 @@ export default function Home() {
                           Book a site
                         </h2>
                         <p className="pt-1 text-sm leading-snug text-[#5c534c] sm:text-[0.9375rem] lg:text-base">
-                          Recreation.gov listings ranked by amenity and safety fit for your group. Always confirm dates
-                          and availability on the official site.
+                          Recommendations are tailored to your trip details, companions, and safety profile, then ordered by
+                          amenity and fit. Always confirm dates and availability on Recreation.gov before you book.
                         </p>
                       </div>
                       {report ? (
@@ -1243,16 +1637,23 @@ export default function Home() {
                                       ~{row.distanceMiles} mi away
                                     </p>
 
-                                    {row.highlights.length > 0 ? (
-                                      <div className="mt-2 flex flex-wrap gap-2 sm:gap-2.5">
-                                        {uniqueAmenityTags(row.highlights, 6).map((tag) => (
-                                          <span
-                                            key={`${row.facilityId}-${tag}`}
-                                            className="inline-flex items-center gap-1 rounded-full border border-[#f0d5b1] bg-[#fff7ec] px-2.5 py-1 text-xs font-semibold text-[#7a5c2e] sm:px-3 sm:py-1.5 sm:text-sm"
-                                          >
-                                            {tag}
-                                          </span>
-                                        ))}
+                                    {row.ridbAmenityTags.length > 0 ||
+                                    row.highlights.some(
+                                      (h) => h.includes("restriction") && (h.includes("pet") || h.includes("dog"))
+                                    ) ? (
+                                      <div className="mt-2 space-y-1.5">
+                                        {row.ridbAmenityTags.length > 0 ? (
+                                          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                                            {row.ridbAmenityTags.map((tag) => (
+                                              <span
+                                                key={`${row.facilityId}-${tag}`}
+                                                className="inline-flex items-center gap-1 rounded-full border border-[#e8dcc8] bg-white px-2 py-0.5 text-[11px] font-semibold text-[#5c534c] sm:px-2.5 sm:py-1 sm:text-xs"
+                                              >
+                                                {tag}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        ) : null}
                                         {row.highlights.some(
                                           (h) =>
                                             h.includes("restriction") && (h.includes("pet") || h.includes("dog"))
@@ -1262,6 +1663,12 @@ export default function Home() {
                                           </span>
                                         ) : null}
                                       </div>
+                                    ) : null}
+
+                                    {row.overviewBlurb ? (
+                                      <p className="mt-2 text-xs leading-relaxed text-[#5c534c] sm:text-sm">
+                                        {row.overviewBlurb}
+                                      </p>
                                     ) : null}
                                   </div>
 
@@ -1310,7 +1717,7 @@ export default function Home() {
                                         {row.safetyScoreUsesTripOrigin ? (
                                           <span>(same area as your trip)</span>
                                         ) : (
-                                          <span>(conditions unavailable — trip score shown)</span>
+                                          <span>(conditions unavailable; trip score shown)</span>
                                         )}
                                       </p>
                                     ) : null}
@@ -1362,7 +1769,7 @@ export default function Home() {
                       {chartData.conditionsNotice}
                     </div>
                   ) : null}
-                  <div className={chartData?.conditionsNotice ? "mt-6" : "mt-5"}>
+                  <div className={chartData?.conditionsNotice ? "mt-4 sm:mt-6" : "mt-4 sm:mt-5"}>
                     <header className="border-b border-[#eadfcd] border-l-4 border-l-[#ea8a12] pb-5 pl-4 text-left sm:pl-5">
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
                         <div className="min-w-0 flex-1 space-y-2">
@@ -1438,32 +1845,55 @@ export default function Home() {
                     <h3 className="font-display border-b-2 border-[#ea8a12] pb-1.5 text-left text-lg font-extrabold tracking-tight text-[#1a1c1e] sm:text-xl">
                       Safety Breakdown
                     </h3>
-                    <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-stretch xl:gap-3">
-                <article className="flex min-h-[240px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-4 shadow-sm ring-1 ring-[#f7d6ab] sm:p-5 xl:w-[300px] xl:self-stretch">
+                    <div className="mt-3 flex flex-col gap-2.5 xl:flex-row xl:items-stretch xl:gap-2.5">
+                <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0c084] bg-gradient-to-b from-[#fff3e0] to-[#ffe8cc] p-3 shadow-sm ring-1 ring-[#f7d6ab] sm:p-4 xl:w-[260px] xl:self-stretch">
                   <div>
-                    <p className="font-display inline-block text-lg font-bold text-[#b45309]">
+                    <p className="font-display inline-block text-base font-bold text-[#4a3426]">
                       Overall Safety Score
                     </p>
-                    <div className="mt-3 flex flex-wrap items-end justify-center gap-3 sm:justify-start">
-                      <p className="font-display text-4xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-5xl">
+                    <div className="mt-2 flex flex-wrap items-end justify-center gap-2 sm:justify-start">
+                      <p className="font-display text-3xl font-bold leading-none tracking-tight text-[#1a1c1e] sm:text-4xl">
                         {normalizedOverallScore.toFixed(1)}
                       </p>
-                      <span className="pb-2 text-lg text-[#888780]">/ 10</span>
+                      <span className="pb-1.5 text-base text-[#888780]">/ 10</span>
                       {overall ? (
                         <span
-                          className={`mb-2 inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-bold tracking-wide ${overall.className}`}
+                          className={`mb-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${overall.className}`}
                         >
                           {overall.label}
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-center text-xs text-[#8b8e94] sm:text-left">
-                      10 is very safe, 1 is dangerous.
+                    <p className="mt-1.5 text-center text-xs font-medium text-[#8b8e94] sm:text-left">
+                      10 is considered safer; 1 is more dangerous.
                     </p>
+                    <div className="mt-3 space-y-2.5">
+                      <p
+                        className={`text-center font-display text-sm font-bold leading-snug sm:text-left ${overallVerdict.className}`}
+                      >
+                        {overallVerdict.headline}
+                      </p>
+                      {keepInMind.length > 0 ? (
+                        <div>
+                          <p className="text-center text-[11px] font-bold uppercase tracking-wide text-[#4a3426] sm:text-left">
+                            Things to keep in mind
+                          </p>
+                          <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs leading-snug text-[#4a3426] sm:pl-5">
+                            {keepInMind.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      <p className="text-center text-[11px] leading-snug text-[#6b6560] sm:text-left">
+                        Scout scores are approximations based on real-time data. Please check conditions yourself
+                        before heading out.
+                      </p>
+                    </div>
                   </div>
-                  <div className="mt-6 flex items-center justify-center">
-                    <div className="relative h-28 w-28">
-                      <svg viewBox="0 0 112 112" className="h-28 w-28 -rotate-90" aria-hidden>
+                  <div className="mt-4 flex items-center justify-center">
+                    <div className="relative h-24 w-24">
+                      <svg viewBox="0 0 112 112" className="h-24 w-24 -rotate-90" aria-hidden>
                         <circle cx="56" cy="56" r="46" stroke="#e2e8f0" strokeWidth="10" fill="none" />
                         <circle
                           cx="56"
@@ -1484,13 +1914,13 @@ export default function Home() {
                           </linearGradient>
                         </defs>
                       </svg>
-                      <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-[#6b7078]">
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-[#6b7078]">
                         {normalizedOverallScore.toFixed(1)}
                       </span>
                     </div>
                   </div>
                 </article>
-                <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3">
+                <div className="grid min-w-0 flex-1 grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-2.5">
                   {report.metrics
                     .filter((metric) => ["Fire Risk", "Air Quality", "Weather Alertness"].includes(metric.label))
                     .map((metric) => {
@@ -1502,27 +1932,21 @@ export default function Home() {
                         ? chartData?.fireDetails ?? detailTextByMetric[metric.label] ?? []
                         : metric.label === "Air Quality"
                           ? chartData?.airQualityDetails ?? detailTextByMetric[metric.label] ?? []
-                          : metric.label === "Weather Alertness"
-                            ? chartData?.weatherHazardDetails ?? detailTextByMetric[metric.label] ?? []
-                        : detailTextByMetric[metric.label] ?? [];
+                          : chartData?.weatherHazardDetails ?? detailTextByMetric[metric.label] ?? [];
 
                     return (
                       <article
                         key={metric.label}
-                        className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5"
+                        className="flex h-full min-h-[200px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-3 shadow-sm sm:p-4"
                       >
                         <div className="flex items-start justify-between gap-2">
-                          <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
+                          <p className="font-display text-sm font-bold text-[#1a1c1e] sm:text-base">
                             <span className="mr-1">{metric.icon}</span>
                             {metric.label === "Fire Risk"
                               ? "Fire Risk Level"
                               : metric.label === "Air Quality"
                                 ? "Air Quality Index"
-                                : metric.label === "Weather Alertness"
-                                  ? "Weather Hazard Index"
-                                  : metric.label === "Bear Risk"
-                                    ? "Bear Risk Level"
-                                    : "Current Temp"}
+                                : "Weather Hazard Index"}
                           </p>
                           {!(metric.label === "Air Quality" && chartData?.airQualityUnavailable) && (
                             <span
@@ -1532,7 +1956,7 @@ export default function Home() {
                             </span>
                           )}
                         </div>
-                        <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                        <p className="font-display mt-3 text-2xl font-bold tracking-tight text-[#1a1c1e] sm:text-3xl">
                           {metric.label === "Air Quality"
                             ? chartData?.airQualityUnavailable
                               ? "N/A"
@@ -1541,24 +1965,23 @@ export default function Home() {
                               ? chartData?.weatherHazardLabel ?? primary.value
                             : primary.value}
                         </p>
-                        <p className="mt-1 text-sm text-[#6b7078]">
+                        <p className="mt-1 text-xs text-[#6b7078]">
                           {metric.label === "Air Quality" && chartData?.airQualityUnavailable
                             ? "Air quality forecasts are only available 5 days ahead (CAMS model limit)"
                             : metric.label === "Air Quality"
                               ? "Trip average air quality"
                               : metric.label === "Weather Alertness"
-                                ? "Based off potential extreme weather events"
-                              : primary.subtitle}
+                                ? "Based off potential extreme weather events, NWS alerts, and flood zone data"
+                                : primary.subtitle}
                         </p>
                         {metric.label === "Fire Risk" && (
                           <div className="mt-2 flex items-center gap-2">
                             {Array.from({ length: 5 }).map((_, idx) => {
-                              const fireLevel = Math.max(1, Math.min(5, Math.round(6 - (metric.value / 100) * 5)));
-                              const active = idx < fireLevel;
+                              const fireLevel = parseInt(primary.value.replace("Risk ", ""), 10);
                               return (
                                 <span
                                   key={idx}
-                                  className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                                  className={`h-2.5 flex-1 rounded-full ${idx < fireLevel ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
                                   aria-hidden
                                 />
                               );
@@ -1573,10 +1996,8 @@ export default function Home() {
                             ? ""
                             : metric.label === "Air Quality"
                             ? ""
-                            : metric.label === "Air Quality" && chartData?.airQualityUnavailable
-                            ? ""
                             : metric.label === "Weather Alertness"
-                              ? `Hazard score: ${chartData?.weatherHazardScore ?? 0} / 100`
+                              ? ""
                               : secondary.line}
                         </p>
                         <div className="mt-4">
@@ -1588,7 +2009,7 @@ export default function Home() {
                                 [metric.label]: !previous[metric.label],
                               }))
                             }
-                            className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                            className="rounded-lg border border-orange-200 bg-orange-100 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
                             aria-expanded={isExpanded}
                             aria-label={`Toggle ${metric.label} details`}
                           >
@@ -1596,7 +2017,7 @@ export default function Home() {
                           </button>
                         </div>
                         {isExpanded && (
-                          <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                          <div className="mt-3 border-t border-[#d9dde3] pt-2.5 text-sm text-[#374151]">
                             {metric.label === "Air Quality" ? (
                               <p>
                                 Air forecast data is typically available and most accurate for up to about 5 days from today.
@@ -1616,64 +2037,60 @@ export default function Home() {
                   })}
 
                   <article className="flex h-full min-h-[240px] flex-col rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-4 shadow-sm sm:p-5">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
-                          <span className="mr-1">🐻</span>
-                          Bear Risk Level
-                        </p>
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${wildlifeTone.className}`}
-                        >
-                          {wildlifeTone.label}
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-display text-base font-bold text-[#1a1c1e] sm:text-lg">
+                        <span className="mr-1">🧗</span>
+                        Elevation &amp; Wildlife Risk
+                      </p>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase ${terrainTone.className}`}>
+                        {terrainTone.label}
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-2">
+                      <p className="font-display text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
+                        Difficulty {terrainDifficultyLevel}
+                      </p>
+                      {chartData?.terrainElevationDetails?.[0]?.includes("below sea level") && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold tracking-wide text-blue-700 uppercase ring-1 ring-blue-200">
+                          Below Sea Level
                         </span>
-                      </div>
-                      <p className="font-display mt-4 text-3xl font-bold tracking-tight text-[#1a1c1e] sm:text-[2rem]">
-                        {bearDangerRating} / 5
-                      </p>
-                      <p className="mt-1 text-sm text-[#6b7078]">
-                        Bear danger rating based on elevation, latitude, and seasonality.
-                      </p>
-                      <div className="mt-4 flex items-center gap-2">
-                        {Array.from({ length: 5 }).map((_, idx) => {
-                          const active = idx < bearDangerRating;
-                          return (
-                            <span
-                              key={idx}
-                              className={`h-2.5 flex-1 rounded-full ${active ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
-                              aria-hidden
-                            />
-                          );
-                        })}
-                      </div>
-                      <div className="mt-3 text-xs text-[#8b8e94]">
-                        1 = minimal activity, 5 = highest observed bear activity conditions.
-                      </div>
-                      <div className="mt-4">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedMetric((previous) => ({
-                              ...previous,
-                              ["Bear Risk"]: !previous["Bear Risk"],
-                            }))
-                          }
-                        className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
-                          aria-expanded={isBearExpanded}
-                          aria-label="Toggle Bear Risk details"
-                        >
-                          {isBearExpanded ? "Hide details" : "Details"}
-                        </button>
-                      </div>
-                      {isBearExpanded && (
-                        <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
-                          <ul className="mt-0 list-disc space-y-1 pl-5">
-                            {(chartData?.bearRiskDetails ?? detailTextByMetric["Bear Risk"] ?? []).map((detail) => (
-                              <li key={detail}>{detail}</li>
-                            ))}
-                          </ul>
-                        </div>
                       )}
+                    </div>
+                    <p className="mt-1 text-sm text-[#6b7078]">
+                      Campground difficulty based on elevation and terrain.{chartData?.terrainLabel ? ` Terrain: ${chartData.terrainLabel}.` : ""}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2">
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <span
+                          key={idx}
+                          className={`h-2.5 flex-1 rounded-full ${idx < terrainDifficultyLevel ? "bg-[#ea8a12]" : "bg-[#e5e7eb]"}`}
+                          aria-hidden
+                        />
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-[#8b8e94]">1 = flat and easy, 5 = very rugged and challenging.</p>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedMetric((previous) => ({ ...previous, ["Terrain & Elevation"]: !previous["Terrain & Elevation"] }))}
+                        className="rounded-lg border border-orange-200 bg-orange-100 px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-700 uppercase transition hover:bg-orange-200/70"
+                        aria-expanded={Boolean(expandedMetric["Terrain & Elevation"])}
+                        aria-label="Toggle terrain and elevation details"
+                      >
+                        {expandedMetric["Terrain & Elevation"] ? "Hide details" : "Details"}
+                      </button>
+                    </div>
+                    {expandedMetric["Terrain & Elevation"] && (
+                      <div className="mt-4 border-t border-[#d9dde3] pt-3 text-base text-[#374151]">
+                        <ul className="list-disc space-y-1 pl-5">
+                          {(chartData?.terrainElevationDetails ?? []).map((detail) => (
+                            <li key={detail}>{detail}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </article>
+
                   </div>
                 </div>
                   </section>
@@ -1689,7 +2106,7 @@ export default function Home() {
                       You&apos;ve reviewed your safety breakdown. Finish planning with packing, then lock in a site
                       while availability is best.
                     </p>
-                    <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-5 shadow-sm sm:min-h-[220px] sm:p-6">
                         <div>
                           <div className="flex items-center gap-2">
@@ -1699,13 +2116,13 @@ export default function Home() {
                             <p className="font-display text-lg font-bold text-[#1a1c1e] sm:text-xl">Packing list</p>
                           </div>
                           <p className="mt-3 text-sm leading-relaxed text-[#5f5450] sm:text-base">
-                            Check off gear matched to your group, health notes, and forecast—before you load the car.
+                            Check off gear matched to your group, health notes, and forecast before you load the car.
                           </p>
                         </div>
                         <button
                           type="button"
                           onClick={() => setReportView("packing")}
-                          className="mt-5 w-full rounded-full bg-[#ea8a12] py-3 text-sm font-extrabold text-white shadow-sm transition hover:brightness-110 sm:text-base"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base"
                         >
                           Open packing list
                         </button>
@@ -1726,10 +2143,31 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => setReportView("bookings")}
-                          className="mt-5 w-full rounded-full bg-[#ea8a12] py-3 text-sm font-extrabold text-white shadow-sm transition hover:brightness-110 sm:text-base"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base"
                         >
-                          Booking tips &amp; links
+                          View site recommendations
                         </button>
+                      </article>
+                      <article className="flex min-h-[200px] flex-col justify-between rounded-2xl border border-[#f0d5b1] bg-[#fff7ec] p-5 shadow-sm sm:min-h-[220px] sm:p-6">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#ea8a12] text-sm font-extrabold text-white">
+                              3
+                            </span>
+                            <p className="font-display text-lg font-bold text-[#1a1c1e] sm:text-xl">Fill feedback form</p>
+                          </div>
+                          <p className="mt-3 text-sm leading-relaxed text-[#5f5450] sm:text-base">
+                            Help us improve Scout — share what worked, what didn&apos;t, and what you&apos;d love to see next.
+                          </p>
+                        </div>
+                        <a
+                          href="https://forms.gle/Wcg4ed36ui4y3h9v5"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-5 w-full rounded-full border-2 border-[#3a2a1c] bg-[#ea8a12] py-3 text-sm font-extrabold text-[#f5f0e8] shadow-[0_3px_0_#2c1f14,0_8px_20px_rgba(44,31,20,0.18)] transition hover:brightness-110 active:translate-y-px active:shadow-[0_2px_0_#2c1f14] sm:text-base text-center block"
+                        >
+                          Fill out feedback form
+                        </a>
                       </article>
                     </div>
                   </section>
@@ -1737,7 +2175,7 @@ export default function Home() {
               )}
               {reportView === "main" && (tripDays > 5 || tripDays > 10) && (
                 <p className="mt-4 text-xs text-[#8b8e94]">
-                  Data coverage limits for this {tripDays}-day trip —{" "}
+                  Data coverage limits for this {tripDays}-day trip:{" "}
                   <span className="font-medium">Air quality:</span> 5 days ahead (CAMS model);{" "}
                   {tripDays > 10 && <><span className="font-medium">Fire proximity:</span> past 10 days (NASA FIRMS); </>}
                   <span className="font-medium">Wind, precipitation &amp; temperature:</span> 16 days ahead.

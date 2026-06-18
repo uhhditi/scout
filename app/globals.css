@@ -27,6 +27,26 @@ body {
 }
 
 /* Main dashboard panel: light base + subtle topo / noise */
+/* Clears fixed trip-dashboard nav (taller on small screens when links wrap). */
+:root {
+  --scout-nav-height: 7.75rem;
+}
+@media (min-width: 640px) {
+  :root {
+    --scout-nav-height: 4.75rem;
+  }
+}
+@media (min-width: 1024px) {
+  :root {
+    --scout-nav-height: 4.25rem;
+  }
+}
+
+.scout-report-section {
+  padding-top: calc(var(--scout-nav-height) + 1rem);
+  scroll-padding-top: calc(var(--scout-nav-height) + 1rem);
+}
+
 .scout-main-bg {
   background-color: #fffaf4;
   background-image:
