@@ -855,15 +855,12 @@ export default function Home() {
       setHealthDetails(parsed.rawDescription);
     }
     setShowAiPlanner(false);
+    setReportView("main");
 
-    if (parsed.complete) {
-      void runScoutTrip(parsed);
-    } else if (parsed.location && (!parsed.startDate || !parsed.endDate)) {
-      setWizardStep(1); // have location, need dates
-    } else if (parsed.location && parsed.startDate && parsed.endDate) {
-      setWizardStep(2); // have location + dates, need companions
+    if (parsed.location) {
+      setWizardStep(3); // drop to final step — everything pre-filled, user confirms
     } else {
-      setWizardStep(0); // nothing useful, start from scratch
+      setWizardStep(0); // no location at all, user must type it
     }
   };
 

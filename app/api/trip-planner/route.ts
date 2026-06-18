@@ -31,7 +31,20 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         system_instruction: {
           parts: [{
-            text: `Today is ${today}. Extract camping trip details from the user's message. If a month is mentioned without a year, use the next upcoming occurrence. Map companions to these exact values only: "Just me", "Partner", "Friends", "Kids", "Elderly", "Pets". Map health concerns to: "Asthma", "Allergies", "Mobility issues", "Heart condition". Return startDate and endDate as YYYY-MM-DD. If no specific dates given, pick a weekend in the stated month.`,
+            text: `Today is ${today}. Extract camping trip details from the user's message and fill in smart defaults for anything missing.
+
+LOCATION rules:
+- If the user names a specific park, campground, forest, or wilderness area → use it directly.
+- If the user mentions a city or general area (e.g. "Seattle", "near Denver", "around LA", "Pacific Northwest", "California mountains") → convert to the single most iconic/popular camping destination in that area, NOT the city (e.g. "Seattle" → "Olympic National Park, WA", "Denver" → "Rocky Mountain National Park, CO", "LA" → "Angeles National Forest, CA", "Pacific Northwest" → "Mount Rainier National Park, WA").
+- If the user gives absolutely no location context at all → return location as empty string.
+
+DATE rules:
+- If specific dates are given → use them.
+- If a month is mentioned without specific days → pick the first full weekend of that month (Friday to Sunday).
+- If no date or month is mentioned at all → use the nearest upcoming weekend from today (${today}).
+- Always return YYYY-MM-DD format.
+
+Map companions to these exact values only: "Just me", "Partner", "Friends", "Kids", "Elderly", "Pets". Map health concerns to: "Asthma", "Allergies", "Mobility issues", "Heart condition".`,
           }],
         },
         contents: [{ role: "user", parts: [{ text: description }] }],
@@ -76,12 +89,16 @@ export async function POST(request: NextRequest) {
   const startDate = typeof parsed.startDate === "string" ? parsed.startDate.trim() : "";
   const endDate = typeof parsed.endDate === "string" ? parsed.endDate.trim() : "";
 
-  return NextResponse.json({
+  const result = {
     location,
     startDate,
     endDate,
     companions: Array.isArray(parsed.companions) ? parsed.companions as string[] : [],
     healthConcerns: Array.isArray(parsed.healthConcerns) ? parsed.healthConcerns as string[] : [],
     complete: Boolean(location && startDate && endDate),
-  });
+  };
+
+  console.log("[trip-planner] parsed:", JSON.stringify(result, null, 2));
+
+  return NextResponse.json(result);
 }
